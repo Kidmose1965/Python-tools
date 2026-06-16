@@ -53,7 +53,10 @@ class App:
 
         self.status = Label(root, text="Klar.", bg=BG, fg="#444",
                             font=("Segoe UI", 9), anchor="w")
-        self.status.pack(fill=X, padx=16, pady=(10, 12))
+        self.status.pack(fill=X, padx=16, pady=(10, 4))
+
+        Label(root, text="udviklet af Birger Kidmose", bg=BG, fg="#999",
+              font=("Segoe UI", 9, "bold"), anchor="e").pack(fill=X, padx=16, pady=(0, 8))
 
     # ------------------------------------------------------------------ utils
     def beskyt(self, fn):
