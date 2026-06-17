@@ -118,7 +118,10 @@ class NumberingEngine:
 # ---------------------------------------------------------------------------
 class Docx:
     def __init__(self, path):
-        self.path = Path(path)
+        # .resolve() retter Windows' korte 8.3-filnavne (fx "03UDBU~1.DOC" fra
+        # tkinters filvalgsdialog) tilbage til det fulde filnavn - uden det
+        # fejler bilag-genkendelsen i krydstjek, som matcher på filnavnet.
+        self.path = Path(path).resolve()
         with zipfile.ZipFile(path) as z:
             def load(name):
                 try:
