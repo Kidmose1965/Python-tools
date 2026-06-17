@@ -168,6 +168,94 @@ def find_bilag(bilag_def, reftype, nr):
 # ---------------------------------------------------------------------------
 # Trin 2+3: Find og validér henvisninger
 # ---------------------------------------------------------------------------
+def validér_samlinger(samlinger):
+    """
+    samlinger: liste af (navn, [Docx])
+    Returnerer (fund, alle_sektioner, alle_bilag)
+    fund-tupler: (samling, status, doknavn, ref, kontekst, forklaring)
+    """
+    EKSTERN_ORD = re.compile(
+        r"\b(forordning|direktiv|loven?|bekendtgørelse|EU|GDPR|"
+        r"databeskyttelsesloven|udbudslov|persondatalov)\b",
+        re.IGNORECASE)
+
+    # Byg indeks per samling
+    indeks = {}
+    for navn, docs in samlinger:
+        sektioner, bilag_def = kortlaeg(docs)
+        indeks[navn] = (sektioner, bilag_def)
+
+    alle_fund = []
+
+    for samling_navn, docs in samlinger:
+        sektioner, bilag_def = indeks[samling_navn]
+
+        # Byg samlet indeks over alle ANDRE samlinger
+        andre_bilag = {}
+        andre_sektioner = {}
+        for andet_navn, (a_sek, a_bil) in indeks.items():
+            if andet_navn != samling_navn:
+                for k, v in a_bil.items():
+                    andre_bilag[k] = (andet_navn, v)
+                for dok, numre in a_sek.items():
+                    for nr in numre:
+                        andre_sektioner.setdefault(nr, []).append(andet_navn)
+
+        fund_lokal, _, _ = validér(docs)
+
+        for status, dok, ref, ctx, forkl in fund_lokal:
+
+            # Ekstern lovhenvisning -> støj
+            if EKSTERN_ORD.search(ref) or EKSTERN_ORD.search(ctx[:80]):
+                alle_fund.append((samling_navn, "stoej", dok, ref, ctx,
+                                  "Ekstern lovhenvisning – ikke valideret"))
+                continue
+
+            # Ugyldig internt -> tjek om den findes i en anden samling
+            if status == "ugyldig":
+                bm = re.search(
+                    r"\b(?:bilag|appendiks|kontraktbilag)\s+(\w+)", ref, re.IGNORECASE)
+                pm = re.search(
+                    r"\b(?:punkt|afsnit|underpunkt)\s+([\d.]+)", ref, re.IGNORECASE)
+
+                if bm:
+                    nr = norm_nr(bm.group(1))
+                    btype = re.match(r"\w+", ref).group(0)
+                    for (dtype, dnr), (andet_navn, sted) in andre_bilag.items():
+                        if dnr == nr:
+                            alle_fund.append((
+                                samling_navn, "usikker", dok, ref, ctx,
+                                f"Ikke fundet i '{samling_navn}' – men findes i "
+                                f"'{andet_navn}' ({sted}). Krydssamlingsreference?"))
+                            break
+                    else:
+                        alle_fund.append((samling_navn, status, dok, ref, ctx, forkl))
+                    continue
+
+                if pm:
+                    nr = norm_nr(pm.group(1))
+                    andre = andre_sektioner.get(nr, [])
+                    if andre:
+                        alle_fund.append((
+                            samling_navn, "usikker", dok, ref, ctx,
+                            f"Afsnit {nr} ikke fundet i '{samling_navn}' – "
+                            f"men findes i '{', '.join(andre)}'. "
+                            f"Krydssamlingsreference?"))
+                    else:
+                        alle_fund.append((samling_navn, status, dok, ref, ctx, forkl))
+                    continue
+
+            alle_fund.append((samling_navn, status, dok, ref, ctx, forkl))
+
+    alle_sektioner = {}
+    alle_bilag = {}
+    for navn, (sek, bil) in indeks.items():
+        alle_sektioner.update(sek)
+        alle_bilag.update(bil)
+
+    return alle_fund, alle_sektioner, alle_bilag
+
+
 def saetning(tekst, start, slut):
     """Klip den omgivende sætning ud som kontekst."""
     a = max(tekst.rfind(". ", 0, start), tekst.rfind("\n", 0, start)) + 1
@@ -307,25 +395,38 @@ def validér(docs):
 # ---------------------------------------------------------------------------
 # Rapport
 # ---------------------------------------------------------------------------
-def _skriv_ark(wb, titel, raekker, intro=None):
+def _normaliser_fund(fund):
+    """Tillader bagudkompatible 5-tupler (status, dok, ref, ctx, forkl) fra
+    validér() - de mappes til 6-tupler med samling=None, ligesom 6-tuplerne
+    (samling, status, dok, ref, ctx, forkl) fra validér_samlinger()."""
+    return [f if len(f) == 6 else (None,) + tuple(f) for f in fund]
+
+
+def _skriv_ark(wb, titel, raekker, vis_samling=False, intro=None):
     ws = wb.create_sheet(titel)
     rr = 1
     if intro:
         ws.cell(row=1, column=1, value=intro).font = Font(italic=True, color="666666")
         rr = 2
-    hoved = ["Status", "Dokument", "Henvisning", "Sætning (kontekst)", "Vurdering"]
-    bredder = [16, 35, 22, 75, 55]
+    if vis_samling:
+        hoved = ["Status", "Samling", "Dokument", "Henvisning", "Sætning (kontekst)", "Vurdering"]
+        bredder = [16, 18, 35, 22, 75, 55]
+    else:
+        hoved = ["Status", "Dokument", "Henvisning", "Sætning (kontekst)", "Vurdering"]
+        bredder = [16, 35, 22, 75, 55]
     for c, (h, b) in enumerate(zip(hoved, bredder), 1):
         cell = ws.cell(row=rr, column=c, value=h)
         cell.font = Font(bold=True)
         ws.column_dimensions[cell.column_letter].width = b
+    sidste_kol = len(hoved)
     orden = {"ugyldig": 0, "usikker": 1, "stoej": 2, "gyldig": 3}
-    for status, dok, ref, ktx, forkl in sorted(raekker, key=lambda f: orden[f[0]]):
+    for samling, status, dok, ref, ktx, forkl in sorted(raekker, key=lambda f: orden[f[1]]):
         rr += 1
         ws.cell(row=rr, column=1, value=SYMBOL[status]).fill = FILLS[status]
-        for c, v in enumerate((dok, ref, ktx, forkl), 2):
+        værdier = (samling, dok, ref, ktx, forkl) if vis_samling else (dok, ref, ktx, forkl)
+        for c, v in enumerate(værdier, 2):
             ws.cell(row=rr, column=c, value=v)
-        for c in range(1, 6):
+        for c in range(1, sidste_kol + 1):
             ws.cell(row=rr, column=c).border = THIN
             ws.cell(row=rr, column=c).alignment = Alignment(wrap_text=True, vertical="top")
     if rr == (2 if intro else 1):
@@ -333,10 +434,12 @@ def _skriv_ark(wb, titel, raekker, intro=None):
 
 
 def skriv_rapport(fund, sektioner, bilag_def, outfile):
+    fund = _normaliser_fund(fund)
+    vis_samling = any(s is not None for s, *_ in fund)
     wb = Workbook()
     wb.remove(wb.active)
 
-    n = {s: sum(1 for f in fund if f[0] == s)
+    n = {s: sum(1 for f in fund if f[1] == s)
          for s in ("gyldig", "ugyldig", "usikker", "stoej")}
 
     # Fane 1: Opsummering
@@ -372,13 +475,13 @@ def skriv_rapport(fund, sektioner, bilag_def, outfile):
 
     # Fane 2: Til gennemgang (kun det vigtige) - ugyldige + usikre
     _skriv_ark(wb, "Til gennemgang",
-               [f for f in fund if f[0] in ("ugyldig", "usikker")],
+               [f for f in fund if f[1] in ("ugyldig", "usikker")], vis_samling,
                intro="De henvisninger der kræver menneskelig vurdering - ugyldige øverst.")
     # Fane 3: Gyldige
-    _skriv_ark(wb, "Gyldige", [f for f in fund if f[0] == "gyldig"])
+    _skriv_ark(wb, "Gyldige", [f for f in fund if f[1] == "gyldig"], vis_samling)
     # Fane 4: Støj
     _skriv_ark(wb, "Støj (kan ignoreres)",
-               [f for f in fund if f[0] == "stoej"],
+               [f for f in fund if f[1] == "stoej"], vis_samling,
                intro="Henvisninger til appendikser/bilag der kun findes som overskrifter "
                      "inde i andre dokumenter - normalt ikke fejl.")
 
@@ -388,14 +491,30 @@ def skriv_rapport(fund, sektioner, bilag_def, outfile):
 
 # ---------------------------------------------------------------------------
 def main():
-    ap = argparse.ArgumentParser(description="Validér krydshenvisninger i kontrakt + bilag")
-    ap.add_argument("filer", nargs="+", help="Kontrakt og alle bilag (.docx)")
+    ap = argparse.ArgumentParser(
+        description="Validér krydshenvisninger på tværs af udbudspakke")
+    ap.add_argument(
+        "--samling", nargs="+", action="append", metavar=("NAVN", "FIL"),
+        help="--samling NAVN fil1.docx fil2.docx ...")
     ap.add_argument("-o", "--output", default="krydstjek.xlsx")
+    ap.add_argument("filer_pos", nargs="*", metavar="FIL",
+                    help="Filer uden samling (bagudkompatibelt)")
     args = ap.parse_args()
 
-    docs = [ex.Docx(f) for f in args.filer]
-    fund, sektioner, bilag_def = validér(docs)
-    n = skriv_rapport(fund, sektioner, bilag_def, args.output)
+    # Byg samlinger: liste af (samlingsnavn, [Docx-objekter])
+    samlinger = []
+    if args.samling:
+        for gruppe in args.samling:
+            navn = gruppe[0]
+            filer = gruppe[1:]
+            samlinger.append((navn, [ex.Docx(f) for f in filer]))
+    if args.filer_pos and not args.samling:
+        samlinger.append(("Standard", [ex.Docx(f) for f in args.filer_pos]))
+    if not samlinger:
+        ap.error("Angiv mindst én --samling eller angiv filer direkte")
+
+    fund, alle_sektioner, alle_bilag = validér_samlinger(samlinger)
+    n = skriv_rapport(fund, alle_sektioner, alle_bilag, args.output)
     print(f"Krydstjek gennemfort -> {args.output}")
     print(f"  Ugyldige: {n['ugyldig']}   Usikre: {n['usikker']}   "
           f"Gyldige: {n['gyldig']}   Stoj: {n['stoej']}")
