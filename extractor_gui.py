@@ -46,7 +46,8 @@ class App:
             ("Udtræk tilbudsgivers inputfelter (gul)", lambda: self.inputfelter("gul")),
             ("Skab kravmatrix", self.kravmatrix),
             ("Skab kravmatrix med kommentarer", self.kravmatrix_kommentarer),
-            ("Validér krydshenvisninger (kontrakt + bilag)", self.krydstjek),
+            ("Krydstjek (uden semantisk kontrol)", self.krydstjek),
+            ("Krydstjek med semantisk kontrol", self.krydstjek_semantik),
             ("Vis dokumentets typografier (styles)", self.styles),
         ]
         for tekst, cmd in knapper:
@@ -187,6 +188,67 @@ class App:
         if not sti:
             return
         n = kt.skriv_rapport(fund, sektioner, bilag_def, sti)
+        self.sæt_status(f"Krydstjek: ❌ {n['ugyldig']}  ⚠️ {n['usikker']}  ✅ {n['gyldig']}")
+        if messagebox.askyesno(
+                "Krydstjek gennemført",
+                f"❌ Ugyldige: {n['ugyldig']}\n⚠️ Usikre: {n['usikker']}\n"
+                f"✅ Gyldige: {n['gyldig']}\n\nRapport gemt:\n{sti}\n\nÅbne rapporten nu?"):
+            try:
+                os.startfile(sti)
+            except AttributeError:
+                import subprocess
+                subprocess.Popen(["xdg-open", sti])
+
+    def krydstjek_semantik(self):
+        try:
+            import krydstjek as kt
+        except ImportError:
+            messagebox.showerror("Mangler modul",
+                                 "krydstjek.py skal ligge i samme mappe som denne fil.")
+            return
+        try:
+            import semantik
+        except ImportError:
+            messagebox.showerror("Mangler modul",
+                                 "semantik.py skal ligge i samme mappe som denne fil.\n"
+                                 "Kør 'pip install anthropic python-dotenv' og opret en "
+                                 ".env-fil med ANTHROPIC_API_KEY.")
+            return
+        filer = filedialog.askopenfilenames(
+            title="Vælg kontrakten OG alle bilag (markér flere med Ctrl)",
+            filetypes=[("Word-dokumenter", "*.docx")])
+        if not filer:
+            self.sæt_status("Ingen dokumenter blev valgt.")
+            return
+        if len(filer) == 1:
+            if not messagebox.askyesno(
+                    "Kun ét dokument valgt",
+                    "Du har kun valgt ét dokument. Henvisninger til bilag kan så "
+                    "ikke valideres mod selve bilagsdokumenterne.\n\nFortsæt alligevel?"):
+                return
+        docs = self.læs(list(filer))
+        samlinger = [("Standard", docs)]
+        self.sæt_status("Kortlægger definitioner og validerer henvisninger ...")
+        fund, sektioner, bilag_def = kt.validér_samlinger(samlinger)
+        if not fund:
+            messagebox.showinfo("Ingen henvisninger",
+                                "Der blev ikke fundet krydshenvisninger i dokumenterne.")
+            self.sæt_status("Ingen henvisninger fundet.")
+            return
+        self.sæt_status("Kører semantisk AI-analyse af ugyldige/usikre henvisninger ...")
+        try:
+            dok_indhold = kt.byg_dokument_indhold(samlinger)
+            semantik_resultater = semantik.analysér_batch(fund, dok_indhold)
+        except Exception:
+            messagebox.showwarning("Semantisk analyse fejlede",
+                                   "Semantisk analyse kunne ikke gennemføres:\n\n"
+                                   + traceback.format_exc(limit=3)
+                                   + "\nRapporten gemmes uden semantisk vurdering.")
+            semantik_resultater = {}
+        sti = self.gem_som("krydstjek_semantik.xlsx")
+        if not sti:
+            return
+        n = kt.skriv_rapport(fund, sektioner, bilag_def, sti, semantik_resultater)
         self.sæt_status(f"Krydstjek: ❌ {n['ugyldig']}  ⚠️ {n['usikker']}  ✅ {n['gyldig']}")
         if messagebox.askyesno(
                 "Krydstjek gennemført",
