@@ -36,8 +36,8 @@ SYMBOL = {"ugyldig": "❌ UGYLDIG", "usikker": "⚠️ USIKKER",
           "gyldig": "✅ GYLDIG", "stoej": "➖ STØJ"}
 
 # -- mønstre ----------------------------------------------------------------
-SEKTIONSORD = r"(?:afsnit|punkt|pkt\.?|kapitel|sektion|klausul|§)"
-BILAGSORD = r"(?:underbilag|bilag|appendiks|appendix)"
+SEKTIONSORD = r"(?:afsnit|punkt|pkt\.?|kapitel|sektion|klausul|§|underpunkt|del)"
+BILAGSORD = r"(?:underbilag|kontraktbilag|bilag|appendiks|appendix)"
 NUM = r"\d+(?:\.\d+)*"
 
 # Bilagsnummer i LØBENDE TEKST: kræver mellemrum efter ordet ("se Bilag 3").
@@ -46,8 +46,17 @@ BILAG_NR = r"(\d+[A-Za-z]?|[A-ZÆØÅ])"
 RE_BILAG_SEKTION = re.compile(
     rf"\b({BILAGSORD})\s+{BILAG_NR}\b[,\s]+\s*({SEKTIONSORD})\s*({NUM})",
     re.IGNORECASE)
-RE_SEKTION = re.compile(rf"\b({SEKTIONSORD})\s*({NUM})(?:\s*[-–]\s*({NUM}))?", re.IGNORECASE)
+RE_SEKTION = re.compile(
+    rf"(?:"
+    rf"(?:kontraktens|nærværende\s+(?:\w+\s+)?)({SEKTIONSORD})\s*({NUM})(?:\s*[-–]\s*({NUM}))?"
+    rf"|"
+    rf"\b({SEKTIONSORD})\s*({NUM})(?:\s*[-–]\s*({NUM}))?"
+    rf")",
+    re.IGNORECASE)
 RE_BILAG = re.compile(rf"\b({BILAGSORD})\s+{BILAG_NR}\b", re.IGNORECASE)
+RE_BILAG_OG = re.compile(
+    rf"\b({BILAGSORD})\s+(\d+[A-Za-z]?)\s+og\s+(\d+[A-Za-z]?)\b",
+    re.IGNORECASE)
 
 RE_MANUELT_NR = re.compile(r"^(\d+(?:\.\d+)+)[\.\)]?\s+\S")   # "4.2 Betaling"
 
@@ -228,7 +237,31 @@ def validér(docs):
                         status, forkl = "ugyldig", f"afsnit {snr} findes ikke i {sted}"
                 fund.append((status, navn, m.group(0), saetning(tekst, m.start(), m.end()), forkl))
 
-            # 2) bilagshenvisninger: "se Bilag 3"
+            # 2a) "bilag 3 og 4" – to bilag i ét udtryk
+            for m in RE_BILAG_OG.finditer(tekst):
+                if not ledig(m) or er_definition(tekst, m):
+                    continue
+                optaget.append((m.start(), m.end()))
+                btype = m.group(1)
+                for bnr_raw in (m.group(2), m.group(3)):
+                    if not er_bilagsnummer(bnr_raw):
+                        continue
+                    bnr = norm_nr(bnr_raw)
+                    status, sted = find_bilag(bilag_def, btype, bnr)
+                    if status == "gyldig":
+                        forkl = f"defineret: {sted}"
+                        if sted.endswith("(overskrift)"):
+                            status = "stoej"
+                            forkl = (f"kun nævnt som overskrift i {sted.split(' (')[0]} - "
+                                     f"ikke eget dokument i samlingen")
+                    elif status == "usikker":
+                        forkl = sted
+                    else:
+                        forkl = f"{btype.title()} {bnr} findes ikke i dokumentsamlingen"
+                    fund.append((status, navn, f"{btype} {bnr_raw}",
+                                 saetning(tekst, m.start(), m.end()), forkl))
+
+            # 2b) bilagshenvisninger: "se Bilag 3", "Kontraktbilag 2"
             for m in RE_BILAG.finditer(tekst):
                 if not ledig(m) or er_definition(tekst, m) or not er_bilagsnummer(m.group(2)):
                     continue
@@ -252,9 +285,14 @@ def validér(docs):
                 if not ledig(m) or er_definition(tekst, m):
                     continue
                 optaget.append((m.start(), m.end()))
-                status1, forkl = tjek_sektion(m.group(2), navn)
-                if m.group(3):                       # interval, fx 2.1-2.3
-                    status2, forkl2 = tjek_sektion(m.group(3), navn)
+                # RE_SEKTION har 6 grupper: (g1,g2,g3) = præfiks-variant, (g4,g5,g6) = standard
+                nr1 = m.group(2) or m.group(5)
+                nr2 = m.group(3) or m.group(6)
+                if not nr1:
+                    continue
+                status1, forkl = tjek_sektion(nr1, navn)
+                if nr2:                              # interval, fx 2.1-2.3
+                    status2, forkl2 = tjek_sektion(nr2, navn)
                     par = sorted([status1, status2], key=["gyldig", "usikker", "ugyldig"].index)
                     if par[0] != par[1]:
                         status1, forkl = "usikker", f"interval delvist gyldigt: {forkl} / {forkl2}"
