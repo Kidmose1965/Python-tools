@@ -18,9 +18,13 @@ Kræver: extractor.py i samme mappe + openpyxl.
 """
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
+
+from dotenv import load_dotenv
+load_dotenv()
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -201,7 +205,8 @@ def validér_samlinger(samlinger):
                     for nr in numre:
                         andre_sektioner.setdefault(nr, []).append(andet_navn)
 
-        fund_lokal, _, _ = validér(docs)
+        fund_lokal, _, _ = validér(
+            docs, _bilag_override=bilag_def, _sektioner_override=sektioner)
 
         for status, dok, ref, ctx, forkl in fund_lokal:
 
@@ -271,8 +276,11 @@ def er_definition(tekst, m):
     return m.start() == 0 and len(tekst) <= 150
 
 
-def validér(docs):
-    sektioner, bilag_def = kortlaeg(docs)
+def validér(docs, _bilag_override=None, _sektioner_override=None):
+    if _bilag_override is not None and _sektioner_override is not None:
+        sektioner, bilag_def = _sektioner_override, _bilag_override
+    else:
+        sektioner, bilag_def = kortlaeg(docs)
     fund = []
 
     def tjek_sektion(nr, doknavn):
@@ -402,18 +410,27 @@ def _normaliser_fund(fund):
     return [f if len(f) == 6 else (None,) + tuple(f) for f in fund]
 
 
-def _skriv_ark(wb, titel, raekker, vis_samling=False, intro=None):
+SEM_FILLS = {"OK": PatternFill("solid", start_color="C6E0B4"),
+             "ADVARSEL": PatternFill("solid", start_color="FFE699"),
+             "FEJL": PatternFill("solid", start_color="F8CBAD")}
+
+
+def _skriv_ark(wb, titel, raekker, vis_samling=False, intro=None, semantik_resultater=None):
     ws = wb.create_sheet(titel)
     rr = 1
     if intro:
         ws.cell(row=1, column=1, value=intro).font = Font(italic=True, color="666666")
         rr = 2
+    hoved = ["Status"]
+    bredder = [16]
     if vis_samling:
-        hoved = ["Status", "Samling", "Dokument", "Henvisning", "Sætning (kontekst)", "Vurdering"]
-        bredder = [16, 18, 35, 22, 75, 55]
-    else:
-        hoved = ["Status", "Dokument", "Henvisning", "Sætning (kontekst)", "Vurdering"]
-        bredder = [16, 35, 22, 75, 55]
+        hoved.append("Samling")
+        bredder.append(18)
+    hoved += ["Dokument", "Henvisning", "Sætning (kontekst)", "Strukturel vurdering"]
+    bredder += [35, 22, 75, 55]
+    if semantik_resultater:
+        hoved += ["Semantisk vurdering", "Forslag"]
+        bredder += [40, 50]
     for c, (h, b) in enumerate(zip(hoved, bredder), 1):
         cell = ws.cell(row=rr, column=c, value=h)
         cell.font = Font(bold=True)
@@ -423,9 +440,26 @@ def _skriv_ark(wb, titel, raekker, vis_samling=False, intro=None):
     for samling, status, dok, ref, ktx, forkl in sorted(raekker, key=lambda f: orden[f[1]]):
         rr += 1
         ws.cell(row=rr, column=1, value=SYMBOL[status]).fill = FILLS[status]
-        værdier = (samling, dok, ref, ktx, forkl) if vis_samling else (dok, ref, ktx, forkl)
-        for c, v in enumerate(værdier, 2):
-            ws.cell(row=rr, column=c, value=v)
+        col = 2
+        if vis_samling:
+            ws.cell(row=rr, column=col, value=samling)
+            col += 1
+        for v in (dok, ref, ktx, forkl):
+            ws.cell(row=rr, column=col, value=v)
+            col += 1
+        if semantik_resultater:
+            sem = semantik_resultater.get((dok, ref, ktx), {})
+            sem_vurd = sem.get("vurdering", "")
+            sem_forkl = sem.get("forklaring", "")
+            sem_forslag = sem.get("forslag", "")
+            sem_celle = ws.cell(row=rr, column=col,
+                                value=f"{sem_vurd}\n{sem_forkl}" if sem_forkl else sem_vurd)
+            sem_fill = SEM_FILLS.get(sem_vurd)
+            if sem_fill:
+                sem_celle.fill = sem_fill
+            col += 1
+            ws.cell(row=rr, column=col, value=sem_forslag)
+            col += 1
         for c in range(1, sidste_kol + 1):
             ws.cell(row=rr, column=c).border = THIN
             ws.cell(row=rr, column=c).alignment = Alignment(wrap_text=True, vertical="top")
@@ -433,7 +467,7 @@ def _skriv_ark(wb, titel, raekker, vis_samling=False, intro=None):
         ws.cell(row=rr + 1, column=2, value="(ingen)")
 
 
-def skriv_rapport(fund, sektioner, bilag_def, outfile):
+def skriv_rapport(fund, sektioner, bilag_def, outfile, semantik_resultater=None):
     fund = _normaliser_fund(fund)
     vis_samling = any(s is not None for s, *_ in fund)
     wb = Workbook()
@@ -476,17 +510,30 @@ def skriv_rapport(fund, sektioner, bilag_def, outfile):
     # Fane 2: Til gennemgang (kun det vigtige) - ugyldige + usikre
     _skriv_ark(wb, "Til gennemgang",
                [f for f in fund if f[1] in ("ugyldig", "usikker")], vis_samling,
-               intro="De henvisninger der kræver menneskelig vurdering - ugyldige øverst.")
+               intro="De henvisninger der kræver menneskelig vurdering - ugyldige øverst.",
+               semantik_resultater=semantik_resultater)
     # Fane 3: Gyldige
-    _skriv_ark(wb, "Gyldige", [f for f in fund if f[1] == "gyldig"], vis_samling)
+    _skriv_ark(wb, "Gyldige", [f for f in fund if f[1] == "gyldig"], vis_samling,
+               semantik_resultater=semantik_resultater)
     # Fane 4: Støj
     _skriv_ark(wb, "Støj (kan ignoreres)",
                [f for f in fund if f[1] == "stoej"], vis_samling,
                intro="Henvisninger til appendikser/bilag der kun findes som overskrifter "
-                     "inde i andre dokumenter - normalt ikke fejl.")
+                     "inde i andre dokumenter - normalt ikke fejl.",
+               semantik_resultater=semantik_resultater)
 
     wb.save(outfile)
     return n
+
+
+def byg_dokument_indhold(samlinger):
+    """Returnerer {doknavn: fuldt tekstindhold} for alle dokumenter."""
+    indhold = {}
+    for samling_navn, docs in samlinger:
+        for d in docs:
+            tekst = "\n".join(t for _, _, t, _ in d.paras if t)
+            indhold[d.path.name] = tekst
+    return indhold
 
 
 # ---------------------------------------------------------------------------
@@ -497,6 +544,9 @@ def main():
         "--samling", nargs="+", action="append", metavar=("NAVN", "FIL"),
         help="--samling NAVN fil1.docx fil2.docx ...")
     ap.add_argument("-o", "--output", default="krydstjek.xlsx")
+    ap.add_argument(
+        "--semantik", action="store_true",
+        help="Kør semantisk AI-analyse af ugyldige/usikre henvisninger")
     ap.add_argument("filer_pos", nargs="*", metavar="FIL",
                     help="Filer uden samling (bagudkompatibelt)")
     args = ap.parse_args()
@@ -514,7 +564,20 @@ def main():
         ap.error("Angiv mindst én --samling eller angiv filer direkte")
 
     fund, alle_sektioner, alle_bilag = validér_samlinger(samlinger)
-    n = skriv_rapport(fund, alle_sektioner, alle_bilag, args.output)
+
+    semantik_resultater = {}
+    if args.semantik:
+        try:
+            import semantik
+            dok_indhold = byg_dokument_indhold(samlinger)
+            semantik_resultater = semantik.analysér_batch(fund, dok_indhold)
+        except ImportError:
+            print("ADVARSEL: semantik.py ikke fundet — springer over")
+        except Exception as e:
+            print(f"ADVARSEL: Semantisk analyse fejlede: {e}")
+
+    n = skriv_rapport(fund, alle_sektioner, alle_bilag,
+                      args.output, semantik_resultater)
     print(f"Krydstjek gennemfort -> {args.output}")
     print(f"  Ugyldige: {n['ugyldig']}   Usikre: {n['usikker']}   "
           f"Gyldige: {n['gyldig']}   Stoj: {n['stoej']}")
