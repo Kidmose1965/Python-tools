@@ -52,7 +52,7 @@ RE_BILAG_SEKTION = re.compile(
     re.IGNORECASE)
 RE_SEKTION = re.compile(
     rf"(?:"
-    rf"(?:kontraktens|nærværende\s+(?:\w+\s+)?)({SEKTIONSORD})\s*({NUM})(?:\s*[-–]\s*({NUM}))?"
+    rf"(kontraktens|nærværende\s+(?:\w+\s+)?)\s*({SEKTIONSORD})\s*({NUM})(?:\s*[-–]\s*({NUM}))?"
     rf"|"
     rf"\b({SEKTIONSORD})\s*({NUM})(?:\s*[-–]\s*({NUM}))?"
     rf")",
@@ -283,8 +283,14 @@ def validér(docs, _bilag_override=None, _sektioner_override=None):
         sektioner, bilag_def = kortlaeg(docs)
     fund = []
 
-    def tjek_sektion(nr, doknavn):
+    def tjek_sektion(nr, doknavn, tvunget_dok=None):
         nr = norm_nr(nr)
+        if tvunget_dok:
+            # henvisningen navngiver eksplicit "Kontraktens" - slå kun op der
+            if nr in sektioner.get(tvunget_dok, set()):
+                return "gyldig", f"henvisning til Kontraktens afsnit {nr} - findes i {tvunget_dok}"
+            return "ugyldig", (f"ugyldig henvisning til Kontraktens afsnit {nr} - "
+                               f"findes ikke i {tvunget_dok}")
         if nr in sektioner[doknavn]:
             return "gyldig", f"intern henvisning til afsnit {nr} - findes i samme dokument"
         andre = [n for n, s in sektioner.items() if nr in s and n != doknavn]
@@ -299,6 +305,14 @@ def validér(docs, _bilag_override=None, _sektioner_override=None):
                                f"{forael} findes, men har intet underpunkt {nr.split('.')[-1]}")
         return "ugyldig", (f"ugyldig intern henvisning: afsnit {nr} findes ikke "
                            f"i dokumentet (og heller ikke i de øvrige medtagne dokumenter)")
+
+    def find_kontrakt_dok():
+        """Find dokumentet der repræsenterer selve kontrakten (ikke et bilag) -
+        bruges når en henvisning eksplicit siger "Kontraktens punkt X"."""
+        kandidater = [navn for navn in sektioner
+                     if re.search(r"\bkontrakt", navn, re.IGNORECASE)
+                     and not RE_BILAG_DEF.search(navn)]
+        return kandidater[0] if len(kandidater) == 1 else None
 
     for d in docs:
         navn = d.path.name
@@ -381,14 +395,21 @@ def validér(docs, _bilag_override=None, _sektioner_override=None):
                 if not ledig(m) or er_definition(tekst, m):
                     continue
                 optaget.append((m.start(), m.end()))
-                # RE_SEKTION har 6 grupper: (g1,g2,g3) = præfiks-variant, (g4,g5,g6) = standard
-                nr1 = m.group(2) or m.group(5)
-                nr2 = m.group(3) or m.group(6)
+                # RE_SEKTION har 7 grupper: g1 = præfiks-ord ("kontraktens"/
+                # "nærværende ..."), (g2,g3,g4) = præfiks-variant, (g5,g6,g7) = standard
+                praefiks = (m.group(1) or "").lower()
+                nr1 = m.group(3) or m.group(6)
+                nr2 = m.group(4) or m.group(7)
                 if not nr1:
                     continue
-                status1, forkl = tjek_sektion(nr1, navn)
+                tvunget_dok = None
+                if praefiks.startswith("kontrakt"):
+                    tvunget_dok = find_kontrakt_dok()
+                    if tvunget_dok == navn:
+                        tvunget_dok = None  # selv-henvisning - ingen grund til at tvinge
+                status1, forkl = tjek_sektion(nr1, navn, tvunget_dok)
                 if nr2:                              # interval, fx 2.1-2.3
-                    status2, forkl2 = tjek_sektion(nr2, navn)
+                    status2, forkl2 = tjek_sektion(nr2, navn, tvunget_dok)
                     par = sorted([status1, status2], key=["gyldig", "usikker", "ugyldig"].index)
                     if par[0] != par[1]:
                         status1, forkl = "usikker", f"interval delvist gyldigt: {forkl} / {forkl2}"
