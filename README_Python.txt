@@ -37,6 +37,11 @@ BRUG
   liste, præcis som i Excel-værktøjets formularer):
     python extractor.py kravmatrix kravspec.docx
 
+  Dan kravmatrix med kommentarer (samme krav-rækker som ovenfor, men
+  med en ekstra kolonne der viser alle Word-kommentarer der er
+  knyttet til den pågældende kravrække):
+    python extractor.py kravmatrix-kommentarer kravspec.docx
+
   Alle kommandoer accepterer -o til at vælge output-filnavn:
     python extractor.py kommentarer kravspec.docx -o mine_kommentarer.xlsx
 
@@ -58,6 +63,9 @@ OUTPUT
                    Krav opfyldt (J/N/D) / Standard-programmel /
                    Tilpasning/opsætning / Redegørelse, med overskrifter
                    i fed og zebrastriber som i originalen.
+  - Kravmatrix med kommentarer: Krav nr. / Kravbeskrivelse / Kommentarer
+                   (samler alle Word-kommentarer der er knyttet til
+                   den enkelte kravrække i en kolonne).
 
   "Sektion" er som i Excel-værktøjet den nærmeste foranstående
   NUMMEREREDE overskrift (fx "2.1 - Funktionelle krav").

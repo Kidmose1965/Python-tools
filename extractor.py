@@ -14,6 +14,7 @@ Brug:
   python extractor.py inputfelter --farve groen FIL.docx [...] [-o output.xlsx]
   python extractor.py inputfelter --farve gul   FIL.docx [...] [-o output.xlsx]
   python extractor.py kravmatrix   KRAVSPEC.docx            [-o output.xlsx]
+  python extractor.py kravmatrix-kommentarer KRAVSPEC.docx  [-o output.xlsx]
   python extractor.py styles       FIL.docx        (viser dokumentets typografier)
 """
 
@@ -325,6 +326,29 @@ def extract_highlights(docx, colour):
 # ---------------------------------------------------------------------------
 # Udtræk 4: Kravmatrix
 # ---------------------------------------------------------------------------
+def _comments_by_anchor_paragraph(docx):
+    """id(afsnit) -> liste af kommentartekster der starter i det afsnit."""
+    if docx.comments_xml is None:
+        return {}
+    meta = {}
+    for c in docx.comments_xml.findall(q("comment")):
+        cid = c.get(q("id"))
+        text = "\n".join(filter(None, (para_text(p) for p in c.findall(q("p")))))
+        meta[cid] = text
+
+    anchor = {}
+    for p_el, _, _, _ in docx.paras:
+        for node in p_el.iter():
+            if node.tag in (q("commentRangeStart"), q("commentReference")):
+                anchor.setdefault(node.get(q("id")), p_el)
+
+    by_para = {}
+    for cid, p_el in anchor.items():
+        if cid in meta:
+            by_para.setdefault(id(p_el), []).append(meta[cid])
+    return by_para
+
+
 def list_styles(docx):
     seen, ordered = set(), []
     for p_el, _, _, _ in docx.paras:
@@ -350,12 +374,13 @@ def _pick(prompt, styles, allow_all):
     return chosen
 
 
-def extract_kravmatrix(docx, table_styles=None, heading_styles=None):
+def extract_kravmatrix(docx, table_styles=None, heading_styles=None, with_comments=False):
     if table_styles is None:
         styles = list_styles(docx)
         table_styles = _pick("\nStyles tilhørende TABEL-elementer (kravene):", styles, True)
         heading_styles = _pick("\nStyles tilhørende OVERSKRIFTER (separatorer):", styles, False) or []
     get_all = table_styles == "ALLE"
+    comments_by_para = _comments_by_anchor_paragraph(docx) if with_comments else {}
 
     rows = []
     body = docx.doc.find(q("body"))
@@ -371,7 +396,13 @@ def extract_kravmatrix(docx, table_styles=None, heading_styles=None):
                     continue
                 c1 = cell_text(docx, tcs[0])
                 c2 = cell_text(docx, tcs[1]) if len(tcs) > 1 else ""
-                if c1 or c2:
+                if not (c1 or c2):
+                    continue
+                if with_comments:
+                    kommentarer = [txt for tc in tcs for p in tc.findall(q("p"))
+                                   for txt in comments_by_para.get(id(p), [])]
+                    rows.append(("krav", c1, c2, "\n".join(kommentarer)))
+                else:
                     rows.append(("krav", c1, c2))
         elif child.tag == q("p"):
             style = docx.para_style_name(child)
@@ -380,7 +411,8 @@ def extract_kravmatrix(docx, table_styles=None, heading_styles=None):
                 label = docx.paras[i][1] if i is not None else None
                 text = para_text(child)
                 if text:
-                    rows.append(("overskrift", label or "", text))
+                    rows.append(("overskrift", label or "", text, "") if with_comments
+                               else ("overskrift", label or "", text))
     return rows
 
 
@@ -450,13 +482,43 @@ def write_kravmatrix(rows, outfile, tilbudsgiver="[…]"):
     wb.save(outfile)
 
 
+def write_kravmatrix_kommentarer(rows, outfile):
+    wb = Workbook()
+    ws = wb.active
+    headers = [("B1", "Krav nr."), ("C1", "Kravbeskrivelse"), ("D1", "Kommentarer")]
+    for ref, val in headers:
+        ws[ref] = val
+        ws[ref].font = Font(bold=True)
+    for col, w in zip("BCD", (21, 85, 60)):
+        ws.column_dimensions[col].width = w
+
+    r = 1
+    for kind, a, b, kommentar in rows:
+        r += 1
+        ws.cell(row=r, column=2, value=a)
+        ws.cell(row=r, column=3, value=b)
+        ws.cell(row=r, column=4, value=kommentar)
+        if kind == "overskrift":
+            ws.cell(row=r, column=2).font = Font(bold=True)
+            ws.cell(row=r, column=3).font = Font(bold=True)
+    if r > 1:
+        for i in range(2, r + 1):
+            for col in range(2, 5):
+                c = ws.cell(row=i, column=col)
+                c.border = THIN
+                c.alignment = Alignment(wrap_text=True, vertical="top")
+                if i % 2 == 0:
+                    c.fill = BAND
+    wb.save(outfile)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Udtræk fra Word-kravspecifikationer (.docx)")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for navn in ("kommentarer", "trackchanges", "kravmatrix", "styles"):
+    for navn in ("kommentarer", "trackchanges", "kravmatrix", "kravmatrix-kommentarer", "styles"):
         p = sub.add_parser(navn)
         p.add_argument("filer", nargs="+")
         p.add_argument("-o", "--output")
@@ -503,7 +565,15 @@ def main():
         out = args.output or "kravmatrix.xlsx"
         write_kravmatrix(rows, out)
 
-    print(f"Udtræk gennemført -> {out}  ({len(recs) if args.cmd != 'kravmatrix' else len(rows)} rækker)")
+    elif args.cmd == "kravmatrix-kommentarer":
+        rows = []
+        for d in docs:
+            rows += extract_kravmatrix(d, with_comments=True)
+        out = args.output or "kravmatrix_kommentarer.xlsx"
+        write_kravmatrix_kommentarer(rows, out)
+
+    er_kravmatrix = args.cmd in ("kravmatrix", "kravmatrix-kommentarer")
+    print(f"Udtræk gennemført -> {out}  ({len(rows) if er_kravmatrix else len(recs)} rækker)")
 
 
 if __name__ == "__main__":

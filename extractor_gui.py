@@ -45,6 +45,7 @@ class App:
             ("Udtræk kundens inputfelter (grøn)", lambda: self.inputfelter("groen")),
             ("Udtræk tilbudsgivers inputfelter (gul)", lambda: self.inputfelter("gul")),
             ("Skab kravmatrix", self.kravmatrix),
+            ("Skab kravmatrix med kommentarer", self.kravmatrix_kommentarer),
             ("Validér krydshenvisninger (kontrakt + bilag)", self.krydstjek),
             ("Vis dokumentets typografier (styles)", self.styles),
         ]
@@ -57,6 +58,7 @@ class App:
 
         Label(root, text="udviklet af Birger Kidmose", bg=BG, fg="#999",
               font=("Segoe UI", 9, "bold"), anchor="e").pack(fill=X, padx=16, pady=(0, 8))
+
 
     # ------------------------------------------------------------------ utils
     def beskyt(self, fn):
@@ -229,6 +231,30 @@ class App:
         if not sti:
             return
         ex.write_kravmatrix(rows, sti)
+        self.færdig(sti, len(rows))
+
+    def kravmatrix_kommentarer(self):
+        filer = self.vælg_filer(flere=False)
+        if not filer:
+            return
+        d = self.læs(filer)[0]
+        valg = StyleDialog(self.root, ex.list_styles(d)).resultat
+        if valg is None:
+            self.sæt_status("Annulleret.")
+            return
+        table_styles, heading_styles = valg
+        self.sæt_status("Danner kravmatrix med kommentarer ...")
+        rows = ex.extract_kravmatrix(d, table_styles, heading_styles, with_comments=True)
+        if not rows:
+            messagebox.showwarning("Tomt resultat",
+                                   "Ingen rækker matchede de valgte typografier.\n"
+                                   "Tjek valgene via 'Vis dokumentets typografier'.")
+            self.sæt_status("Intet udtrukket.")
+            return
+        sti = self.gem_som("kravmatrix_kommentarer.xlsx")
+        if not sti:
+            return
+        ex.write_kravmatrix_kommentarer(rows, sti)
         self.færdig(sti, len(rows))
 
 
