@@ -25,41 +25,100 @@ except ImportError:
     sys.exit(1)
 
 BG = "#F0F4F8"
-BTN = {"width": 34, "pady": 6, "bg": "#DCE6F1", "activebackground": "#C5D9F1",
-       "relief": "groove", "anchor": "w", "padx": 12}
+
+# Rambøll-inspireret farvepalet
+OXFORD = "#2D3748"        # mørk header/tekst
+CYAN = "#009DE0"          # accent
+WHITE = "#FFFFFF"         # baggrund
+GRAA = "#718096"          # sekundær tekst/linjer
+HOVER = "#E6F6FD"         # lys cyan ved hover
+HEADER_UNDERTEKST = "#CBD5E0"
+HEADER_VERSION = "#A0AEC0"
+STATUS_BG = "#EDF2F7"
 
 
 class App:
     def __init__(self, root):
         self.root = root
         root.title("Extractor - udtræk fra kravspecifikationer")
-        root.configure(bg=BG)
+        root.configure(bg=WHITE)
         root.resizable(False, False)
+        try:
+            root.iconbitmap(str(Path(__file__).resolve().parent / "icon.ico"))
+        except Exception:
+            pass
 
-        Label(root, text="Vælg udtræk", bg=BG,
-              font=("Segoe UI", 13, "bold")).pack(pady=(14, 8))
+        # ---- header -----------------------------------------------------
+        header = Frame(root, bg=OXFORD)
+        header.pack(fill=X)
+        header_venstre = Frame(header, bg=OXFORD)
+        header_venstre.pack(side=LEFT, anchor="w", padx=20, pady=(16, 14))
+        Label(header_venstre, text="Extractor", bg=OXFORD, fg=WHITE,
+              font=("Segoe UI", 18, "bold")).pack(anchor="w")
+        Label(header_venstre, text="Kvalitetssikring af udbudsdokumenter",
+              bg=OXFORD, fg=HEADER_UNDERTEKST,
+              font=("Segoe UI", 10)).pack(anchor="w", pady=(2, 0))
+        Label(header, text="v2.0 – juni 2026", bg=OXFORD, fg=HEADER_VERSION,
+              font=("Segoe UI", 8)).pack(side=RIGHT, anchor="n", padx=16, pady=(14, 0))
 
-        knapper = [
+        # ---- statuslinje og kreditering (bund - pakkes først så de "bunder") --
+        self.status = Label(root, text="Klar.", bg=STATUS_BG, fg=OXFORD,
+                            font=("Segoe UI", 9), anchor="w", padx=14, pady=6)
+        self.status.pack(fill=X, side="bottom")
+
+        Label(root, text="Udviklet af Birger Kidmose", bg=WHITE, fg=GRAA,
+              font=("Segoe UI", 8), anchor="e").pack(
+              fill=X, padx=18, pady=(4, 8), side="bottom")
+
+        # ---- knapgrupper --------------------------------------------------
+        krop = Frame(root, bg=WHITE)
+        krop.pack(fill=BOTH, expand=True)
+
+        self._gruppe(krop, "UDTRÆK", [
             ("Udtræk kommentarer", self.kommentarer),
             ("Udtræk trackchanges", self.trackchanges),
             ("Udtræk kundens inputfelter (grøn)", lambda: self.inputfelter("groen")),
             ("Udtræk tilbudsgivers inputfelter (gul)", lambda: self.inputfelter("gul")),
+        ])
+        self._gruppe(krop, "ANALYSE", [
             ("Skab kravmatrix", self.kravmatrix),
             ("Skab kravmatrix med kommentarer", self.kravmatrix_kommentarer),
             ("Krydstjek (uden semantisk kontrol)", self.krydstjek),
             ("Krydstjek med semantisk kontrol", self.krydstjek_semantik),
+        ])
+        self._gruppe(krop, "HJÆLP", [
             ("Vis dokumentets typografier (styles)", self.styles),
-        ]
+        ])
+
+        # Sørg for en luftig, ca. 420px bred rude uden at klippe indhold
+        root.update_idletasks()
+        bredde = max(420, root.winfo_reqwidth())
+        højde = root.winfo_reqheight()
+        root.geometry(f"{bredde}x{højde}")
+
+    # ------------------------------------------------------------ design ---
+    def _gruppe(self, parent, titel, knapper):
+        """Tegner en gruppe knapper under en lille grå overskrift."""
+        Label(parent, text=titel, bg=WHITE, fg=GRAA,
+              font=("Segoe UI", 9, "bold"), anchor="w").pack(
+              fill=X, padx=20, pady=(16, 6))
         for tekst, cmd in knapper:
-            Button(root, text=tekst, command=self.beskyt(cmd), **BTN).pack(padx=16, pady=3)
+            self._knap(parent, tekst, cmd)
 
-        self.status = Label(root, text="Klar.", bg=BG, fg="#444",
-                            font=("Segoe UI", 9), anchor="w")
-        self.status.pack(fill=X, padx=16, pady=(10, 4))
-
-        Label(root, text="udviklet af Birger Kidmose", bg=BG, fg="#999",
-              font=("Segoe UI", 9, "bold"), anchor="e").pack(fill=X, padx=16, pady=(0, 8))
-
+    def _knap(self, parent, tekst, cmd):
+        """Flad knap med tynd cyan kant og lys cyan hover (plain tkinter -
+        ttk-knapper respekterer ikke altid custom baggrundsfarver på Windows)."""
+        kant = Frame(parent, bg=CYAN)
+        kant.pack(fill=X, padx=20, pady=4)
+        knap = Button(kant, text=tekst, command=self.beskyt(cmd),
+                     bg=WHITE, fg=OXFORD, activebackground=HOVER,
+                     activeforeground=OXFORD, relief="flat", borderwidth=0,
+                     highlightthickness=0, anchor="w", padx=14, pady=10,
+                     font=("Segoe UI", 10), cursor="hand2")
+        knap.pack(fill=X, padx=1, pady=1)
+        knap.bind("<Enter>", lambda e: knap.config(bg=HOVER))
+        knap.bind("<Leave>", lambda e: knap.config(bg=WHITE))
+        return knap
 
     # ------------------------------------------------------------------ utils
     def beskyt(self, fn):
