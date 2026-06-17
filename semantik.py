@@ -1,8 +1,10 @@
 import os
 import re
 import time
+from dotenv import load_dotenv
 from anthropic import Anthropic
 
+load_dotenv()
 client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
 SYSTEM_PROMPT = """Du er juridisk kvalitetskontrollør af danske offentlige
