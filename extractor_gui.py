@@ -85,6 +85,7 @@ class App:
             ("Skab kravmatrix med kommentarer", self.kravmatrix_kommentarer),
             ("Krydstjek (uden semantisk kontrol)", self.krydstjek),
             ("Krydstjek med semantisk kontrol", self.krydstjek_semantik),
+            ("Tjek interne henvisninger", self.intern_tjek),
         ])
         self._gruppe(krop, "HJÆLP", [
             ("Vis dokumentets typografier (styles)", self.styles),
@@ -311,6 +312,40 @@ class App:
         self.sæt_status(f"Krydstjek: ❌ {n['ugyldig']}  ⚠️ {n['usikker']}  ✅ {n['gyldig']}")
         if messagebox.askyesno(
                 "Krydstjek gennemført",
+                f"❌ Ugyldige: {n['ugyldig']}\n⚠️ Usikre: {n['usikker']}\n"
+                f"✅ Gyldige: {n['gyldig']}\n\nRapport gemt:\n{sti}\n\nÅbne rapporten nu?"):
+            try:
+                os.startfile(sti)
+            except AttributeError:
+                import subprocess
+                subprocess.Popen(["xdg-open", sti])
+
+    def intern_tjek(self):
+        try:
+            import intern_tjek as it
+        except ImportError:
+            messagebox.showerror("Mangler modul",
+                                 "intern_tjek.py skal ligge i samme mappe som denne fil.")
+            return
+        filer = self.vælg_filer(flere=False)
+        if not filer:
+            return
+        d = self.læs(filer)[0]
+        self.sæt_status("Validerer interne afsnits-/punkthenvisninger ...")
+        fund, numre = it.validér_internt(d)
+        if not fund:
+            messagebox.showinfo("Ingen henvisninger",
+                                "Der blev ikke fundet interne afsnits-/punkthenvisninger "
+                                "i dokumentet.")
+            self.sæt_status("Ingen henvisninger fundet.")
+            return
+        sti = self.gem_som("intern_tjek.xlsx")
+        if not sti:
+            return
+        n = it.skriv_rapport(fund, sti)
+        self.sæt_status(f"Intern tjek: ❌ {n['ugyldig']}  ⚠️ {n['usikker']}  ✅ {n['gyldig']}")
+        if messagebox.askyesno(
+                "Intern tjek gennemført",
                 f"❌ Ugyldige: {n['ugyldig']}\n⚠️ Usikre: {n['usikker']}\n"
                 f"✅ Gyldige: {n['gyldig']}\n\nRapport gemt:\n{sti}\n\nÅbne rapporten nu?"):
             try:
