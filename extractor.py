@@ -30,6 +30,7 @@ from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 BAND = PatternFill("solid", start_color="DCE6F1")
 THIN = Border(*[Side(style="thin")] * 4)
+BLOKERET = PatternFill("solid", start_color="000000")
 
 
 def q(tag):
@@ -466,14 +467,18 @@ def write_kravmatrix(rows, outfile, tilbudsgiver="[…]"):
     for col, w in zip("BCDEFGHI", (21, 85, 6, 6, 6, 20, 22, 22)):
         ws.column_dimensions[col].width = w
 
+    mindstekrav_raekker = []
     r = 6
     for kind, a, b in rows:
         r += 1
         ws.cell(row=r, column=2, value=a)
-        ws.cell(row=r, column=3, value=b)
+        c_krav = ws.cell(row=r, column=3, value=b)
         if kind == "overskrift":
             ws.cell(row=r, column=2).font = Font(bold=True)
-            ws.cell(row=r, column=3).font = Font(bold=True)
+            c_krav.font = Font(bold=True)
+        elif "[MK]" in b:
+            c_krav.font = Font(bold=True)
+            mindstekrav_raekker.append(r)
     if r > 6:
         for i in range(7, r + 1):
             for col in range(2, 10):
@@ -482,6 +487,11 @@ def write_kravmatrix(rows, outfile, tilbudsgiver="[…]"):
                 c.alignment = Alignment(wrap_text=True, vertical="top")
                 if i % 2 == 0:
                     c.fill = BAND
+        # Mindstekrav: lås N, D, Standard-programmel, Tilpasning/opsætning og
+        # Redegørelse (sort baggrund) - kun J (kolonne D) forbliver hvid/åben.
+        for i in mindstekrav_raekker:
+            for col in (5, 6, 7, 8, 9):
+                ws.cell(row=i, column=col).fill = BLOKERET
     wb.save(outfile)
 
 
@@ -499,11 +509,15 @@ def write_kravmatrix_kommentarer(rows, outfile):
     for kind, a, b, kommentar in rows:
         r += 1
         ws.cell(row=r, column=2, value=a)
-        ws.cell(row=r, column=3, value=b)
+        c_krav = ws.cell(row=r, column=3, value=b)
         ws.cell(row=r, column=4, value=kommentar)
         if kind == "overskrift":
             ws.cell(row=r, column=2).font = Font(bold=True)
-            ws.cell(row=r, column=3).font = Font(bold=True)
+            c_krav.font = Font(bold=True)
+        elif "[MK]" in b:
+            # Mindstekrav: kravteksten gøres fed, men kommentar-kolonnen
+            # (reviewerens felt) forbliver hvid og åben - lås IKKE den her.
+            c_krav.font = Font(bold=True)
     if r > 1:
         for i in range(2, r + 1):
             for col in range(2, 5):
