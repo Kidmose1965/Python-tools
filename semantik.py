@@ -34,7 +34,7 @@ def byg_prompt(henvisning, kilde_kontekst, ref_indhold, ref_navn):
 KONTEKST (sætningen hvori henvisningen optræder):
 {kilde_kontekst}
 
-REFERRED INDHOLD ({ref_navn}):
+HENVIST INDHOLD ({ref_navn}):
 {ref_indhold[:1500]}
 
 Giver denne henvisning semantisk mening?"""
@@ -72,7 +72,7 @@ def analysér_batch(fund, dokument_indhold, max_per_minut=40, on_progress=None):
         if not ref_indhold:
             resultater[(dok, ref, ctx)] = {
                 "vurdering": "UKENDT",
-                "forklaring": "Referred indhold ikke tilgængeligt for semantisk analyse",
+                "forklaring": "Det henviste indhold blev ikke fundet - kan ikke semantisk analyseres",
                 "forslag": None
             }
             if on_progress:
