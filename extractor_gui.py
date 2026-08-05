@@ -216,8 +216,16 @@ class App:
         return mappe or None
 
     # ------------------------------------------------------------ udtrækkene
+    def _lang_fil(self, f):
+        """.resolve() slår Windows' 8.3-kortnavne (fx "XXBILA~1.XLS" fra
+        tkinters filvælger ved stier over ~260 tegn) tilbage til det fulde
+        filnavn - kald dette FØR filendelsen tjekkes eller filnavnet vises,
+        ellers trunkeres fx ".xlsx" til det 3-tegns kortnavn ".XLS", og
+        "Dokument"-kolonnen i output ender med at vise kortnavnet."""
+        return Path(f).resolve()
+
     def _udtræk_kommentarer_fra_fil(self, f):
-        if Path(f).suffix.lower() == ".xlsx":
+        if f.suffix.lower() == ".xlsx":
             return ex.extract_excel_comments(f)
         return ex.extract_comments(ex.Docx(f))
 
@@ -227,14 +235,15 @@ class App:
             return
         recs = []
         sprunget_over = []
-        for f in filer:
-            self.sæt_status(f"Læser {Path(f).name} ...")
+        for raw_f in filer:
+            f = self._lang_fil(raw_f)
+            self.sæt_status(f"Læser {f.name} ...")
             try:
                 fund = self._udtræk_kommentarer_fra_fil(f)
             except ex.DocxFejl as fejl:
                 sprunget_over.append(str(fejl))
                 continue
-            recs += fund or [{"Dokument": Path(f).name,
+            recs += fund or [{"Dokument": f.name,
                               "Kommentar": "Ingen kommentarer",
                               "__ingen_fund__": True}]
         if len(sprunget_over) == len(filer):
@@ -263,8 +272,9 @@ class App:
         recs = []
         antal_uden = 0
         sprunget_over = []
-        for f in filer:
-            self.sæt_status(f"Læser {Path(f).name} ...")
+        for raw_f in filer:
+            f = self._lang_fil(raw_f)
+            self.sæt_status(f"Læser {f.name} ...")
             try:
                 fund = self._udtræk_kommentarer_fra_fil(f)
             except ex.DocxFejl as fejl:
