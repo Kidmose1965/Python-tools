@@ -132,11 +132,17 @@ def _find_ref_indhold(ref, dokument_indhold):
     if pm:
         nr = pm.group(1)
         for doknavn, indhold in dokument_indhold.items():
-            # Find afsnittet i dokumentet
-            m = re.search(
-                rf"(?:^|\n)#{1,4}\s*{re.escape(nr)}\b(.{{0,2000}})",
-                indhold, re.MULTILINE | re.DOTALL)
-            if m:
-                return m.group(0)[:2000], f"{doknavn} afsnit {nr}"
+            # Find afsnittet i dokumentet - der kan være flere træffere hvis
+            # dokumentet også har en indholdsfortegnelse med samme numre.
+            for m in re.finditer(
+                    rf"(?:^|\n)#{{1,4}}\s*{re.escape(nr)}\b(.{{0,2000}})",
+                    indhold, re.MULTILINE | re.DOTALL):
+                udsnit = m.group(0)
+                foerste_linje = udsnit.lstrip("\n").split("\n", 1)[0]
+                # Indholdsfortegnelse-linjer ender typisk i <tab>sidetal - det
+                # er ikke det egentlige afsnitsindhold, så spring over dem.
+                if re.search(r"\t\d+\s*$", foerste_linje):
+                    continue
+                return udsnit[:2000], f"{doknavn} afsnit {nr}"
 
     return None, None

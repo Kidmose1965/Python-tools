@@ -50,6 +50,12 @@ STOPORD = {"og", "i", "for", "den", "det", "en", "et", "som", "der", "til",
 # ske rettidigt" -> emnet er "betaling", ikke "betaling skal ske rettidigt").
 _EMNE_STOP = (r"(?:skal|kan|vil|bør|må|og|eller|samt|men|fordi|idet|der|som"
              r"|inden|senest|uden|jf\.?)")
+RE_EKSTERN_EFTER = re.compile(
+    r"^\s*(?:\([^)]*\)\s*)?i\s+"
+    r"(?:udbudsbetingelser(?:ne)?|udbudsbetingelse|"
+    r"kravspecifikation(?:en)?|kontrakten|bilag\b)",
+    re.IGNORECASE)
+
 RE_EMNE = re.compile(
     r"^\s*(?:\((?P<paren>[^)]+)\)|"
     rf"(?:om|vedrørende|angående)\s+(?P<ord>(?:(?!{_EMNE_STOP}\b)[^\s.,;:\n]+\s*){{1,6}}))",
@@ -131,6 +137,9 @@ def validér_internt(docx):
 
         for m in kt.RE_SEKTION.finditer(tekst):
             if not ledig(m) or kt.er_definition(tekst, m):
+                continue
+            if RE_EKSTERN_EFTER.match(tekst[m.end():]):
+                optaget.append((m.start(), m.end()))
                 continue
             nr1 = m.group(3) or m.group(6)
             nr2 = m.group(4) or m.group(7)

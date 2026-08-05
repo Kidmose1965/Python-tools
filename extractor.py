@@ -19,15 +19,20 @@ Brug:
 """
 
 import argparse
+import os
+import posixpath
+import re
 import sys
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+W14 = "{http://schemas.microsoft.com/office/word/2010/wordml}"
+W15 = "{http://schemas.microsoft.com/office/word/2012/wordml}"
 BAND = PatternFill("solid", start_color="DCE6F1")
 THIN = Border(*[Side(style="thin")] * 4)
 BLOKERET = PatternFill("solid", start_color="000000")
@@ -35,6 +40,16 @@ BLOKERET = PatternFill("solid", start_color="000000")
 
 def q(tag):
     return W + tag
+
+
+def lang_sti(path):
+    r"""Windows kan ikke åbne stier over ca. 260 tegn uden \\?\-præfikset
+    (fx dybe OneDrive-mapper). Path.resolve() giver altid en absolut sti,
+    så det er trygt at præfikse den her."""
+    s = str(path)
+    if os.name == "nt" and not s.startswith("\\\\?\\") and len(s) >= 240:
+        s = "\\\\?\\" + s
+    return s
 
 
 # ---------------------------------------------------------------------------
@@ -117,37 +132,113 @@ class NumberingEngine:
 # ---------------------------------------------------------------------------
 # Docx-læser
 # ---------------------------------------------------------------------------
+class DocxFejl(Exception):
+    """Rejses når en .docx-fil ikke kan læses (beskadiget zip, gammelt
+    .doc-format, krypteret/adgangskodebeskyttet, eller mangler sin
+    hoveddel)."""
+
+
+PKG_REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+
+
+def _find_hoveddel(z):
+    """Finder stien til dokumentets hoveddel i zip-arkivet. Normalt
+    "word/document.xml", men fx Word Online kan navngive den
+    "word/document2.xml" e.l. Slår derfor rigtigt op via _rels/.rels
+    (relationen med Type ".../relationships/officeDocument") og falder kun
+    tilbage til et regex-gæt, hvis relations-filen mangler eller er
+    uventet."""
+    try:
+        rels_root = ET.fromstring(z.read("_rels/.rels"))
+        for rel in rels_root.findall(PKG_REL + "Relationship"):
+            if rel.get("Type", "").endswith("/relationships/officeDocument"):
+                target = rel.get("Target", "").lstrip("/")
+                if target in z.namelist():
+                    return target
+    except (KeyError, ET.ParseError):
+        pass
+    for name in z.namelist():
+        if re.fullmatch(r"word/document\d*\.xml", name):
+            return name
+    return None
+
+
 class Docx:
     def __init__(self, path):
         # .resolve() retter Windows' korte 8.3-filnavne (fx "03UDBU~1.DOC" fra
         # tkinters filvalgsdialog) tilbage til det fulde filnavn - uden det
         # fejler bilag-genkendelsen i krydstjek, som matcher på filnavnet.
         self.path = Path(path).resolve()
-        with zipfile.ZipFile(path) as z:
-            def load(name):
-                try:
-                    return ET.fromstring(z.read(name))
-                except KeyError:
-                    return None
+        sti = lang_sti(self.path)
+        try:
+            with zipfile.ZipFile(sti) as z:
+                hoveddel = _find_hoveddel(z)
+                if hoveddel is None:
+                    raise DocxFejl(
+                        f"{self.path.name}: kunne ikke finde dokumentets "
+                        "hoveddel (word/document.xml eller lignende) i "
+                        "filen. Filen er muligvis ikke en gyldig .docx-fil.")
 
-            self.doc = load("word/document.xml")
-            self.numbering = NumberingEngine(load("word/numbering.xml"))
-            self.comments_xml = load("word/comments.xml")
+                def load(name):
+                    try:
+                        return ET.fromstring(z.read(name))
+                    except KeyError:
+                        return None
 
-            # styleId -> (visningsnavn, numPr-fra-style, basedOn)
-            self.styles = {}
-            styles_root = load("word/styles.xml")
-            if styles_root is not None:
-                for st in styles_root.findall(q("style")):
-                    sid = st.get(q("styleId"))
-                    name_el = st.find(q("name"))
-                    numpr = st.find(f"{q('pPr')}/{q('numPr')}")
-                    based = st.find(q("basedOn"))
-                    self.styles[sid] = (
-                        name_el.get(q("val")) if name_el is not None else sid,
-                        numpr,
-                        based.get(q("val")) if based is not None else None,
-                    )
+                self.doc = load(hoveddel)
+                if self.doc is None:
+                    raise DocxFejl(
+                        f"{self.path.name}: dokumentets hoveddel ({hoveddel}) "
+                        "kunne ikke findes i filen, selvom relationerne "
+                        "peger på den. Filen er muligvis beskadiget.")
+
+                # numbering/comments/styles.xml slås op i samme mappe som
+                # hoveddelen selv (normalt "word", men følg med hvis
+                # hoveddelen skulle ligge et andet sted), med "word/" som
+                # fallback for utraditionelle pakker.
+                mappe = posixpath.dirname(hoveddel) or "word"
+
+                def load_i_mappe(navn):
+                    data = load(f"{mappe}/{navn}")
+                    if data is None and mappe != "word":
+                        data = load(f"word/{navn}")
+                    return data
+
+                self.numbering = NumberingEngine(load_i_mappe("numbering.xml"))
+                self.comments_xml = load_i_mappe("comments.xml")
+                self.comments_ext_xml = load_i_mappe("commentsExtended.xml")
+
+                # styleId -> (visningsnavn, numPr-fra-style, basedOn)
+                self.styles = {}
+                styles_root = load_i_mappe("styles.xml")
+                if styles_root is not None:
+                    for st in styles_root.findall(q("style")):
+                        sid = st.get(q("styleId"))
+                        name_el = st.find(q("name"))
+                        numpr = st.find(f"{q('pPr')}/{q('numPr')}")
+                        based = st.find(q("basedOn"))
+                        self.styles[sid] = (
+                            name_el.get(q("val")) if name_el is not None else sid,
+                            numpr,
+                            based.get(q("val")) if based is not None else None,
+                        )
+        except zipfile.BadZipFile:
+            magic = b""
+            try:
+                with open(sti, "rb") as fh:
+                    magic = fh.read(4)
+            except OSError:
+                pass
+            if magic == b"\xd0\xcf\x11\xe0":
+                raise DocxFejl(
+                    f"{self.path.name}: dette er en gammel .doc-fil (eller "
+                    "en krypteret/adgangskodebeskyttet .docx-fil), ikke en "
+                    "moderne .docx-fil. Gem dokumentet som almindelig .docx "
+                    "i Word (fjern evt. adgangskode) og prøv igen.") from None
+            raise DocxFejl(
+                f"{self.path.name}: filen kunne ikke læses som et "
+                "zip-arkiv (.docx-filer er zip-arkiver). Filen er "
+                "muligvis beskadiget.") from None
 
         self._scan()
 
@@ -168,6 +259,11 @@ class Docx:
         self.paras = []          # [(element, label|None, tekst, in_table)]
         self.index_of = {}       # id(element) -> indeks i self.paras
         body = self.doc.find(q("body"))
+        if body is None:
+            raise DocxFejl(
+                f"{self.path.name}: dokumentets hoveddel mangler et "
+                "<w:body>-element. Filen er muligvis beskadiget eller ikke "
+                "en gyldig .docx-fil.")
         for el, in_tbl in self._iter_block(body, False):
             label = self._para_label(el)
             text = para_text(el)
@@ -243,10 +339,25 @@ def extract_comments(docx):
     if docx.comments_xml is None:
         return out
     meta = {}
+    para_to_cid = {}   # w14:paraId (kommentarens sidste afsnit) -> kommentar-id
     for c in docx.comments_xml.findall(q("comment")):
         cid = c.get(q("id"))
-        text = "\n".join(filter(None, (para_text(p) for p in c.findall(q("p")))))
+        ps = c.findall(q("p"))
+        text = "\n".join(filter(None, (para_text(p) for p in ps)))
         meta[cid] = (c.get(q("initials")) or c.get(q("author")) or "", text)
+        if ps:
+            pid = ps[-1].get(W14 + "paraId")
+            if pid:
+                para_to_cid[pid] = cid
+
+    # trådstruktur: commentsExtended.xml kobler svar til forælder via paraId
+    parent_of = {}
+    if docx.comments_ext_xml is not None:
+        for cex in docx.comments_ext_xml.iter(W15 + "commentEx"):
+            pid = cex.get(W15 + "paraId")
+            parent_pid = cex.get(W15 + "paraIdParent")
+            if pid in para_to_cid and parent_pid in para_to_cid:
+                parent_of[para_to_cid[pid]] = para_to_cid[parent_pid]
 
     # find scope-tekst og ankerafsnit for hver kommentar
     scope_text, anchor, active = {}, {}, set()
@@ -265,13 +376,51 @@ def extract_comments(docx):
             elif node.tag == q("commentReference"):
                 anchor.setdefault(node.get(q("id")), p_el)
 
-    for n, (cid, (initials, text)) in enumerate(sorted(meta.items(), key=lambda kv: int(kv[0])), 1):
+    ordered = sorted(meta.items(), key=lambda kv: int(kv[0]))
+    num_of = {cid: n for n, (cid, _) in enumerate(ordered, 1)}
+    for n, (cid, (initials, text)) in enumerate(ordered, 1):
         sec = docx.section_for(anchor[cid]) if cid in anchor else "Ukendt placering"
+        if cid in parent_of:
+            root, hop = cid, 0
+            while root in parent_of and hop < 50:
+                root = parent_of[root]
+                hop += 1
+            traad = "Svar"
+            svar_paa = f"Nr. {num_of[root]}"
+        else:
+            traad, svar_paa = "Ny tråd", ""
         out.append({
-            "Dokument": docx.path.name, "Nummer": n, "Kommentar": text,
+            "Dokument": docx.path.name, "Nummer": n, "Tråd": traad,
+            "Svar på": svar_paa, "Kommentar": text,
             "Markeret tekst": "".join(scope_text.get(cid, [])).strip(),
             "Initialer": initials, "Nummereret sektion": sec,
         })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Udtræk 1b: Kommentarer fra Excel
+# ---------------------------------------------------------------------------
+def extract_excel_comments(path):
+    path = Path(path).resolve()
+    wb = load_workbook(lang_sti(path), read_only=False, data_only=True)
+    out = []
+    n = 0
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.comment:
+                    n += 1
+                    out.append({
+                        "Dokument": path.name,
+                        "Nummer": n,
+                        "Kommentar": str(cell.comment.text or "").strip(),
+                        "Markeret tekst": str(cell.value) if cell.value is not None else "",
+                        "Initialer": cell.comment.author or "",
+                        "Nummereret sektion": f"{sheet_name} - {cell.column_letter}{cell.row}",
+                    })
+    wb.close()
     return out
 
 
@@ -440,10 +589,14 @@ def write_simple(records, headers, outfile, widths):
         c = ws.cell(row=1, column=col, value=h)
         c.font = Font(bold=True)
         ws.column_dimensions[c.column_letter].width = w
+    INGEN_FUND_FILL = PatternFill("solid", start_color="CCEBF9")
     for r, rec in enumerate(records, 2):
+        ingen_fund = rec.get("__ingen_fund__", False)
         for col, h in enumerate(headers, 2):
             c = ws.cell(row=r, column=col, value=rec.get(h, ""))
             c.alignment = Alignment(wrap_text=True, vertical="top")
+            if ingen_fund:
+                c.fill = INGEN_FUND_FILL
     for row in ws.iter_rows(min_row=1, max_row=max(1, len(records) + 1),
                             min_col=2, max_col=len(headers) + 1):
         for c in row:
@@ -556,11 +709,12 @@ def main():
 
     if args.cmd == "kommentarer":
         recs = [r for d in docs for r in (extract_comments(d) or
-                [{"Dokument": d.path.name, "Kommentar": "Ingen kommentarer"}])]
+                [{"Dokument": d.path.name, "Kommentar": "Ingen kommentarer",
+                  "__ingen_fund__": True}])]
         out = args.output or "kommentarer.xlsx"
-        write_simple(recs, ["Dokument", "Nummer", "Kommentar", "Markeret tekst",
-                            "Initialer", "Nummereret sektion"], out,
-                     [35, 9, 50, 50, 12, 50])
+        write_simple(recs, ["Dokument", "Nummer", "Tråd", "Svar på", "Kommentar",
+                            "Markeret tekst", "Initialer", "Nummereret sektion"], out,
+                     [35, 9, 10, 10, 50, 50, 12, 50])
 
     elif args.cmd == "trackchanges":
         recs = [r for d in docs for r in (extract_trackchanges(d) or

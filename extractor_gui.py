@@ -25,6 +25,11 @@ except ImportError:
     sys.exit(1)
 
 BG = "#F0F4F8"
+KOMMENTAR_TYPER = [
+    ("Alle understøttede dokumenter", "*.docx *.xlsx"),
+    ("Word-dokumenter", "*.docx"),
+    ("Excel-filer", "*.xlsx"),
+]
 
 # Rambøll-inspireret farvepalet
 OXFORD = "#2D3748"        # mørk header/tekst
@@ -76,6 +81,7 @@ class App:
 
         self._gruppe(krop, "UDTRÆK", [
             ("Udtræk kommentarer", self.kommentarer),
+            ("Udtræk kommentarer (kun dokumenter med fund)", self.kommentarer_filtreret),
             ("Udtræk trackchanges", self.trackchanges),
             ("Udtræk kundens inputfelter (grøn)", lambda: self.inputfelter("groen")),
             ("Udtræk tilbudsgivers inputfelter (gul)", lambda: self.inputfelter("gul")),
@@ -129,7 +135,7 @@ class App:
                 fn()
             except Exception:
                 messagebox.showerror("Fejl", "Der opstod en uventet fejl:\n\n"
-                                     + traceback.format_exc(limit=3))
+                                     + traceback.format_exc())
                 self.sæt_status("Fejl - se fejlbesked.")
         return wrapper
 
@@ -137,10 +143,11 @@ class App:
         self.status.config(text=tekst)
         self.root.update_idletasks()
 
-    def vælg_filer(self, flere=True):
+    def vælg_filer(self, flere=True, filetypes=None):
+        if filetypes is None:
+            filetypes = [("Word-dokumenter", "*.docx")]
         fn = filedialog.askopenfilenames if flere else filedialog.askopenfilename
-        valg = fn(title="Vælg kravspecifikation(er)",
-                  filetypes=[("Word-dokumenter", "*.docx")])
+        valg = fn(title="Vælg kravspecifikation(er)", filetypes=filetypes)
         if not valg:
             self.sæt_status("Ingen dokumenter blev valgt.")
             return None
@@ -165,35 +172,152 @@ class App:
                 subprocess.Popen(["xdg-open", sti])
 
     def læs(self, filer):
+        """Indlæser hver fil som ex.Docx. Filer der ikke kan læses (fx
+        gamle .doc-filer, krypterede eller beskadigede .docx-filer)
+        springes over, og brugeren informeres samlet til sidst. Fejler
+        ALLE filer, vises en fejlbesked og None returneres, så det
+        kaldende sted kan afbryde."""
         docs = []
+        sprunget_over = []
         for f in filer:
             self.sæt_status(f"Læser {Path(f).name} ...")
-            docs.append(ex.Docx(f))
+            try:
+                docs.append(ex.Docx(f))
+            except ex.DocxFejl as fejl:
+                sprunget_over.append(str(fejl))
+        if sprunget_over:
+            if not docs:
+                messagebox.showerror(
+                    "Ingen dokumenter kunne læses",
+                    "Ingen af de valgte dokumenter kunne læses:\n\n"
+                    + "\n\n".join(sprunget_over))
+                return None
+            messagebox.showwarning(
+                "Nogle dokumenter blev sprunget over",
+                f"{len(sprunget_over)} dokument(er) kunne ikke læses og "
+                "blev sprunget over:\n\n" + "\n\n".join(sprunget_over))
         return docs
 
+    def vælg_kontekst_mappe(self):
+        """Spørger om der skal angives en baggrundsmappe (fx udbudsbetingelserne)
+        hvis opslag bruges til at validere henvisninger korrekt, uden selv at
+        blive tjekket for henvisninger. Returnerer valgt mappesti eller None."""
+        if not messagebox.askyesno(
+                "Baggrundsdokumenter?",
+                "Vil du angive en mappe med baggrundsdokumenter (fx selve "
+                "udbudsbetingelserne)?\n\nSå bliver henvisninger som "
+                "\"punkt 14.1 i udbudsbetingelserne\" ikke fejlagtigt markeret "
+                "som ugyldige, bare fordi udbudsbetingelserne ikke selv er "
+                "blandt de dokumenter du vil have tjekket.\n\n"
+                "Dokumenterne i mappen bruges KUN til opslag - de tjekkes ikke "
+                "selv for henvisninger."):
+            return None
+        mappe = filedialog.askdirectory(title="Vælg mappe med baggrundsdokumenter")
+        return mappe or None
+
     # ------------------------------------------------------------ udtrækkene
+    def _udtræk_kommentarer_fra_fil(self, f):
+        if Path(f).suffix.lower() == ".xlsx":
+            return ex.extract_excel_comments(f)
+        return ex.extract_comments(ex.Docx(f))
+
     def kommentarer(self):
-        filer = self.vælg_filer()
+        filer = self.vælg_filer(filetypes=KOMMENTAR_TYPER)
         if not filer:
             return
         recs = []
-        for d in self.læs(filer):
-            recs += ex.extract_comments(d) or [{"Dokument": d.path.name,
-                                                "Kommentar": "Ingen kommentarer"}]
+        sprunget_over = []
+        for f in filer:
+            self.sæt_status(f"Læser {Path(f).name} ...")
+            try:
+                fund = self._udtræk_kommentarer_fra_fil(f)
+            except ex.DocxFejl as fejl:
+                sprunget_over.append(str(fejl))
+                continue
+            recs += fund or [{"Dokument": Path(f).name,
+                              "Kommentar": "Ingen kommentarer",
+                              "__ingen_fund__": True}]
+        if len(sprunget_over) == len(filer):
+            messagebox.showerror(
+                "Ingen dokumenter kunne læses",
+                "Ingen af de valgte dokumenter kunne læses:\n\n"
+                + "\n\n".join(sprunget_over))
+            return
+        if sprunget_over:
+            messagebox.showwarning(
+                "Nogle dokumenter blev sprunget over",
+                f"{len(sprunget_over)} dokument(er) kunne ikke læses og "
+                "blev sprunget over:\n\n" + "\n\n".join(sprunget_over))
         sti = self.gem_som("kommentarer.xlsx")
         if not sti:
             return
-        ex.write_simple(recs, ["Dokument", "Nummer", "Kommentar", "Markeret tekst",
-                               "Initialer", "Nummereret sektion"], sti,
-                        [35, 9, 50, 50, 12, 50])
+        ex.write_simple(recs, ["Dokument", "Nummer", "Tråd", "Svar på", "Kommentar",
+                               "Markeret tekst", "Initialer", "Nummereret sektion"], sti,
+                        [35, 9, 10, 10, 50, 50, 12, 50])
         self.færdig(sti, len(recs))
+
+    def kommentarer_filtreret(self):
+        filer = self.vælg_filer(filetypes=KOMMENTAR_TYPER)
+        if not filer:
+            return
+        recs = []
+        antal_uden = 0
+        sprunget_over = []
+        for f in filer:
+            self.sæt_status(f"Læser {Path(f).name} ...")
+            try:
+                fund = self._udtræk_kommentarer_fra_fil(f)
+            except ex.DocxFejl as fejl:
+                sprunget_over.append(str(fejl))
+                continue
+            if fund:
+                recs += fund
+            else:
+                antal_uden += 1
+
+        if len(sprunget_over) == len(filer):
+            messagebox.showerror(
+                "Ingen dokumenter kunne læses",
+                "Ingen af de valgte dokumenter kunne læses:\n\n"
+                + "\n\n".join(sprunget_over))
+            return
+        if sprunget_over:
+            messagebox.showwarning(
+                "Nogle dokumenter blev sprunget over",
+                f"{len(sprunget_over)} dokument(er) kunne ikke læses og "
+                "blev sprunget over:\n\n" + "\n\n".join(sprunget_over))
+
+        if not recs:
+            messagebox.showinfo("Ingen kommentarer",
+                                "Ingen af de valgte dokumenter indeholder kommentarer.")
+            self.sæt_status("Ingen kommentarer fundet i nogen dokumenter.")
+            return
+        sti = self.gem_som("kommentarer_filtreret.xlsx")
+        if not sti:
+            return
+        ex.write_simple(recs, ["Dokument", "Nummer", "Tråd", "Svar på", "Kommentar",
+                               "Markeret tekst", "Initialer", "Nummereret sektion"], sti,
+                        [35, 9, 10, 10, 50, 50, 12, 50])
+        self.sæt_status(f"Udtræk gennemført: {len(recs)} rækker -> {Path(sti).name}")
+        besked = f"{len(recs)} rækker skrevet til:\n{sti}"
+        if antal_uden:
+            besked += f"\n\n({antal_uden} dokument(er) uden kommentarer er udeladt)"
+        if messagebox.askyesno("Udtræk gennemført", besked + "\n\nÅbne filen nu?"):
+            try:
+                os.startfile(sti)
+            except AttributeError:
+                import subprocess
+                subprocess.Popen(["xdg-open", sti])
 
     def trackchanges(self):
         filer = self.vælg_filer()
         if not filer:
             return
+        docs = self.læs(filer)
+        if not docs:
+            return
         recs = []
-        for d in self.læs(filer):
+        for d in docs:
             recs += ex.extract_trackchanges(d) or [{"Dokument": d.path.name,
                                                     "Ændring": "Ingen trackchanges"}]
         sti = self.gem_som("trackchanges.xlsx")
@@ -207,8 +331,11 @@ class App:
         filer = self.vælg_filer()
         if not filer:
             return
+        docs = self.læs(filer)
+        if not docs:
+            return
         recs = []
-        for d in self.læs(filer):
+        for d in docs:
             recs += ex.extract_highlights(d, farve) or [{"Dokument": d.path.name,
                                                          "Inputfelt": "Ingen markerede felter"}]
         sti = self.gem_som(f"inputfelter_{farve}.xlsx")
@@ -237,8 +364,15 @@ class App:
                     "ikke valideres mod selve bilagsdokumenterne.\n\nFortsæt alligevel?"):
                 return
         docs = self.læs(list(filer))
+        if not docs:
+            return
+        kontekst_mappe = self.vælg_kontekst_mappe()
+        kontekst_docs = kt.byg_kontekst_docs([kontekst_mappe], docs) if kontekst_mappe else []
+        if kontekst_docs:
+            self.sæt_status(f"Kontekst: {len(kontekst_docs)} baggrundsdokument(er) indlæst ...")
         self.sæt_status("Kortlægger definitioner og validerer henvisninger ...")
-        fund, sektioner, bilag_def = kt.validér(docs)
+        fund, sektioner, bilag_def = kt.validér_samlinger(
+            [("Standard", docs)], kontekst_docs=kontekst_docs)
         if not fund:
             messagebox.showinfo("Ingen henvisninger",
                                 "Der blev ikke fundet krydshenvisninger i dokumenterne.")
@@ -287,9 +421,15 @@ class App:
                     "ikke valideres mod selve bilagsdokumenterne.\n\nFortsæt alligevel?"):
                 return
         docs = self.læs(list(filer))
+        if not docs:
+            return
+        kontekst_mappe = self.vælg_kontekst_mappe()
+        kontekst_docs = kt.byg_kontekst_docs([kontekst_mappe], docs) if kontekst_mappe else []
+        if kontekst_docs:
+            self.sæt_status(f"Kontekst: {len(kontekst_docs)} baggrundsdokument(er) indlæst ...")
         samlinger = [("Standard", docs)]
         self.sæt_status("Kortlægger definitioner og validerer henvisninger ...")
-        fund, sektioner, bilag_def = kt.validér_samlinger(samlinger)
+        fund, sektioner, bilag_def = kt.validér_samlinger(samlinger, kontekst_docs=kontekst_docs)
         if not fund:
             messagebox.showinfo("Ingen henvisninger",
                                 "Der blev ikke fundet krydshenvisninger i dokumenterne.")
@@ -298,6 +438,8 @@ class App:
         self.sæt_status("Kører semantisk AI-analyse af ugyldige/usikre henvisninger ...")
         try:
             dok_indhold = kt.byg_dokument_indhold(samlinger)
+            for d in kontekst_docs:
+                dok_indhold[d.path.name] = kt._dok_tekst(d)
             semantik_resultater = semantik.analysér_batch(fund, dok_indhold)
         except Exception:
             messagebox.showwarning("Semantisk analyse fejlede",
@@ -330,7 +472,10 @@ class App:
         filer = self.vælg_filer(flere=False)
         if not filer:
             return
-        d = self.læs(filer)[0]
+        docs = self.læs(filer)
+        if not docs:
+            return
+        d = docs[0]
         self.sæt_status("Validerer interne afsnits-/punkthenvisninger ...")
         fund, numre = it.validér_internt(d)
         if not fund:
@@ -358,8 +503,11 @@ class App:
         filer = self.vælg_filer()
         if not filer:
             return
+        docs = self.læs(filer)
+        if not docs:
+            return
         tekst = ""
-        for d in self.læs(filer):
+        for d in docs:
             tekst += f"{d.path.name}:\n" + "\n".join(
                 f"   - {s}" for s in ex.list_styles(d)) + "\n\n"
         self.sæt_status("Typografier fundet.")
@@ -369,7 +517,10 @@ class App:
         filer = self.vælg_filer(flere=False)
         if not filer:
             return
-        d = self.læs(filer)[0]
+        docs = self.læs(filer)
+        if not docs:
+            return
+        d = docs[0]
         valg = StyleDialog(self.root, ex.list_styles(d)).resultat
         if valg is None:
             self.sæt_status("Annulleret.")
@@ -393,7 +544,10 @@ class App:
         filer = self.vælg_filer(flere=False)
         if not filer:
             return
-        d = self.læs(filer)[0]
+        docs = self.læs(filer)
+        if not docs:
+            return
+        d = docs[0]
         valg = StyleDialog(self.root, ex.list_styles(d)).resultat
         if valg is None:
             self.sæt_status("Annulleret.")

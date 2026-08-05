@@ -14,6 +14,19 @@ Kan køres alene:
     python krydstjek.py kontrakt.docx "Bilag 1 Tidsplan.docx" [...] -o rapport.xlsx
 eller via knappen "Validér krydshenvisninger" i extractor_gui.py.
 
+De dokumenter du angiver direkte bliver TJEKKET (deres henvisninger valideres
+og rapporteres). Med --kontekst kan du derudover angive filer/mapper der kun
+bruges til OPSLAG - fx selve udbudsbetingelserne - så en henvisning som
+"punkt 14.1 i udbudsbetingelserne" ikke fejlagtigt markeres ugyldig, bare
+fordi udbudsbetingelserne ikke selv er en af de dokumenter du vil have tjekket:
+
+    python krydstjek.py kontrakt.docx tidsplan.docx --kontekst "01. Udbudsbetingelser.docx" -o rapport.xlsx
+
+--kontekst kan også pege på en mappe - så bruges alle .docx-filer direkte i
+den mappe (ikke undermapper som fx ARKIV) som baggrundskontekst:
+
+    python krydstjek.py kontrakt.docx tidsplan.docx --kontekst "C:/.../Udbudsmateriale" -o rapport.xlsx
+
 Kræver: extractor.py i samme mappe + openpyxl.
 """
 
@@ -172,9 +185,12 @@ def find_bilag(bilag_def, reftype, nr):
 # ---------------------------------------------------------------------------
 # Trin 2+3: Find og validér henvisninger
 # ---------------------------------------------------------------------------
-def validér_samlinger(samlinger):
+def validér_samlinger(samlinger, kontekst_docs=None):
     """
     samlinger: liste af (navn, [Docx])
+    kontekst_docs: valgfri liste af Docx der KUN bruges til opslag af afsnits-
+        og bilagsnumre (fx udbudsbetingelserne) - de bliver ikke selv scannet
+        for henvisninger og indgår ikke i rapportens fund.
     Returnerer (fund, alle_sektioner, alle_bilag)
     fund-tupler: (samling, status, doknavn, ref, kontekst, forklaring)
     """
@@ -189,10 +205,20 @@ def validér_samlinger(samlinger):
         sektioner, bilag_def = kortlaeg(docs)
         indeks[navn] = (sektioner, bilag_def)
 
+    # Kontekstdokumenters afsnits-/bilagsnumre lægges oveni HVER samlings eget
+    # indeks (kun til opslag under validering) - men holdes ude af "indeks",
+    # som cross-samling-logikken herunder bruger uændret.
+    kctx_sektioner, kctx_bilag = kortlaeg(kontekst_docs) if kontekst_docs else ({}, {})
+
     alle_fund = []
 
     for samling_navn, docs in samlinger:
         sektioner, bilag_def = indeks[samling_navn]
+
+        sektioner_m_kontekst = {**sektioner, **kctx_sektioner}
+        bilag_m_kontekst = dict(bilag_def)
+        for k, v in kctx_bilag.items():
+            bilag_m_kontekst.setdefault(k, v)
 
         # Byg samlet indeks over alle ANDRE samlinger
         andre_bilag = {}
@@ -206,7 +232,7 @@ def validér_samlinger(samlinger):
                         andre_sektioner.setdefault(nr, []).append(andet_navn)
 
         fund_lokal, _, _ = validér(
-            docs, _bilag_override=bilag_def, _sektioner_override=sektioner)
+            docs, _bilag_override=bilag_m_kontekst, _sektioner_override=sektioner_m_kontekst)
 
         for status, dok, ref, ctx, forkl in fund_lokal:
 
@@ -257,6 +283,12 @@ def validér_samlinger(samlinger):
     for navn, (sek, bil) in indeks.items():
         alle_sektioner.update(sek)
         alle_bilag.update(bil)
+    # Kontekstdokumenter mærkes tydeligt i opsummeringen, så det er synligt
+    # at de kun er brugt til opslag - ikke tjekket for henvisninger.
+    for navn, numre in kctx_sektioner.items():
+        alle_sektioner[f"{navn} (kontekst - ikke tjekket)"] = numre
+    for k, v in kctx_bilag.items():
+        alle_bilag.setdefault(k, v)
 
     return alle_fund, alle_sektioner, alle_bilag
 
@@ -547,14 +579,62 @@ def skriv_rapport(fund, sektioner, bilag_def, outfile, semantik_resultater=None)
     return n
 
 
+def _dok_tekst(d):
+    """Fuldt tekstindhold af ét dokument til semantisk analyse.
+    Nummererede afsnit (Word-nummerering ELLER manuelt tastet '4.2 Betaling')
+    får et '# nr'-præfiks foran teksten, så semantik.py's opslag af
+    'punkt X.Y' kan finde det rigtige sted i dokumentet - ellers går
+    afsnitsnummeret tabt, fordi det normalt ligger i label, ikke i teksten."""
+    linjer = []
+    for _, label, t, _ in d.paras:
+        if not t:
+            continue
+        nr = None
+        if label and label[:1].isdigit():
+            nr = label
+        else:
+            m = RE_MANUELT_NR.match(t)
+            if m and len(t) <= 150:
+                nr = m.group(1)
+        linjer.append(f"# {nr} {t}" if nr else t)
+    return "\n".join(linjer)
+
+
 def byg_dokument_indhold(samlinger):
     """Returnerer {doknavn: fuldt tekstindhold} for alle dokumenter."""
     indhold = {}
     for samling_navn, docs in samlinger:
         for d in docs:
-            tekst = "\n".join(t for _, _, t, _ in d.paras if t)
-            indhold[d.path.name] = tekst
+            indhold[d.path.name] = _dok_tekst(d)
     return indhold
+
+
+def byg_kontekst_docs(kilder, maal_docs):
+    """Indlæser kontekst-dokumenter til opslag (afsnits-/bilagsnumre) uden at
+    de selv skal tjekkes for henvisninger.
+
+    kilder: liste af filstier og/eller mappestier (str/Path). En mappe
+        udvides til alle .docx-filer direkte i mappen (ikke undermapper);
+        Words åbne-låsefiler ('~$...') springes automatisk over.
+    maal_docs: Docx-objekter der allerede indgår som mål (tjekkes for
+        henvisninger) - udelades her, så de ikke indlæses/tælles dobbelt.
+
+    Returnerer liste af Docx, klar til validér_samlinger(..., kontekst_docs=...).
+    """
+    if not kilder:
+        return []
+    maal_stier = {d.path for d in maal_docs}
+    kontekst_stier = {}   # dict bruges som ordnet sæt (bevarer rækkefølge)
+    for sti in kilder:
+        p = Path(sti)
+        if p.is_dir():
+            for f in sorted(p.glob("*.docx")):
+                if f.name.startswith("~$"):   # Words åbne-låsefil - spring over
+                    continue
+                kontekst_stier[f.resolve()] = None
+        else:
+            kontekst_stier[p.resolve()] = None
+    return [ex.Docx(rp) for rp in kontekst_stier if rp not in maal_stier]
 
 
 # ---------------------------------------------------------------------------
@@ -568,6 +648,12 @@ def main():
     ap.add_argument(
         "--semantik", action="store_true",
         help="Kør semantisk AI-analyse af ugyldige/usikre henvisninger")
+    ap.add_argument(
+        "--kontekst", nargs="+", metavar="FIL_ELLER_MAPPE",
+        help="Filer og/eller mapper der KUN bruges til opslag af afsnits- og "
+             "bilagsnumre (fx udbudsbetingelserne) - bruges ikke til at finde "
+             "henvisninger og optræder ikke som fund i rapporten. En mappe "
+             "udvides til alle .docx-filer direkte i mappen (ikke undermapper).")
     ap.add_argument("filer_pos", nargs="*", metavar="FIL",
                     help="Filer uden samling (bagudkompatibelt)")
     args = ap.parse_args()
@@ -584,13 +670,22 @@ def main():
     if not samlinger:
         ap.error("Angiv mindst én --samling eller angiv filer direkte")
 
-    fund, alle_sektioner, alle_bilag = validér_samlinger(samlinger)
+    # Kontekstdokumenter: filer/mapper der kun bruges til opslag.
+    maal_docs = [d for _, docs in samlinger for d in docs]
+    kontekst_docs = byg_kontekst_docs(args.kontekst, maal_docs)
+    if kontekst_docs:
+        print(f"Kontekst: {len(kontekst_docs)} dokument(er) brugt til opslag "
+              f"(tjekkes ikke selv for henvisninger)")
+
+    fund, alle_sektioner, alle_bilag = validér_samlinger(samlinger, kontekst_docs=kontekst_docs)
 
     semantik_resultater = {}
     if args.semantik:
         try:
             import semantik
             dok_indhold = byg_dokument_indhold(samlinger)
+            for d in kontekst_docs:
+                dok_indhold[d.path.name] = _dok_tekst(d)
             semantik_resultater = semantik.analysér_batch(fund, dok_indhold)
         except ImportError:
             print("ADVARSEL: semantik.py ikke fundet — springer over")
