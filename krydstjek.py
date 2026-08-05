@@ -67,7 +67,9 @@ RE_SEKTION = re.compile(
     rf"(?:"
     rf"(kontraktens|nærværende\s+(?:\w+\s+)?)\s*({SEKTIONSORD})\s*({NUM})(?:\s*[-–]\s*({NUM}))?"
     rf"|"
-    rf"\b({SEKTIONSORD})\s*({NUM})(?:\s*[-–]\s*({NUM}))?"
+    # (?<!\w) i stedet for \b: \b matcher ikke foran et symbol som "§" (begge
+    # sider ikke-ordtegn), så "§ 4.2" faldt hidtil helt igennem nettet.
+    rf"(?<!\w)({SEKTIONSORD})\s*({NUM})(?:\s*[-–]\s*({NUM}))?"
     rf")",
     re.IGNORECASE)
 RE_BILAG = re.compile(rf"\b({BILAGSORD})\s+{BILAG_NR}\b", re.IGNORECASE)
@@ -76,6 +78,27 @@ RE_BILAG_OG = re.compile(
     re.IGNORECASE)
 
 RE_MANUELT_NR = re.compile(r"^(\d+(?:\.\d+)+)[\.\)]?\s+\S")   # "4.2 Betaling"
+
+# Pladsholder-henvisninger: skabelontekst hvor nummeret ikke er udfyldt endnu,
+# fx "jf. punkt x.x", "se Kapitel ?", "Bilag ??" eller "afsnit [nummer]". De
+# matcher ALDRIG mønstrene ovenfor (som kræver et rigtigt tal/bogstav), og blev
+# derfor tidligere slet ikke opdaget - i stedet for at blive markeret ugyldig
+# forsvandt de bare. En henvisning uden udfyldt nummer er pr. definition en
+# fejl, så den flages altid som ugyldig, uanset om et "rigtigt" nummer med
+# samme værdi findes et sted i samlingen.
+# - x/X (evt. gentaget og/eller med punktum: x, xx, x.x, X.X.X ...) er kun
+#   entydigt en pladsholder for afsnit/punkt/kapitel/§ osv., hvor et rigtigt
+#   nummer ALDRIG er et bogstav. For bilag kan et enkelt bogstav (fx "Bilag A")
+#   være en ægte betegnelse, så der bruges her kun symbol-pladsholdere.
+PLADSHOLDER_ORD = r"(?:N/A|TBD|TBC|\[[^\]\n]{1,20}\]|_{2,}|\.{3,}|…)"
+PLADSHOLDER_SEKTION_NR = rf"(?:[xX?]+(?:[.\s][xX?]+)*|{PLADSHOLDER_ORD})"
+PLADSHOLDER_BILAG_NR = rf"(?:\?+(?:[.\s]\?+)*|{PLADSHOLDER_ORD})"
+RE_PLADSHOLDER_SEKTION = re.compile(
+    rf"(?<!\w)({SEKTIONSORD})\s*({PLADSHOLDER_SEKTION_NR})(?!\w)",
+    re.IGNORECASE)
+RE_PLADSHOLDER_BILAG = re.compile(
+    rf"\b({BILAGSORD})\s+({PLADSHOLDER_BILAG_NR})(?!\w)",
+    re.IGNORECASE)
 
 # Enkeltbogstavs-"numre" der i virkeligheden er danske småord, ikke bilagsnumre.
 # "bilag i det omfang", "bilag og kontrakt", "bilag e-mail" osv.
@@ -355,6 +378,27 @@ def validér(docs, _bilag_override=None, _sektioner_override=None):
 
             def ledig(m):
                 return not any(a < m.end() and m.start() < b for a, b in optaget)
+
+            # 0) pladsholder-henvisninger: "punkt x.x", "Kapitel ?", "Bilag ??"
+            # - skabelontekst hvor nummeret ikke er udfyldt. Altid ugyldig.
+            for m in RE_PLADSHOLDER_SEKTION.finditer(tekst):
+                if not ledig(m) or er_definition(tekst, m):
+                    continue
+                optaget.append((m.start(), m.end()))
+                fund.append(("ugyldig", navn, m.group(0),
+                             saetning(tekst, m.start(), m.end()),
+                             f"henvisningen \"{m.group(0)}\" bruger en pladsholder "
+                             f"i stedet for et rigtigt afsnitsnummer - mangler at "
+                             f"blive udfyldt"))
+            for m in RE_PLADSHOLDER_BILAG.finditer(tekst):
+                if not ledig(m) or er_definition(tekst, m):
+                    continue
+                optaget.append((m.start(), m.end()))
+                fund.append(("ugyldig", navn, m.group(0),
+                             saetning(tekst, m.start(), m.end()),
+                             f"henvisningen \"{m.group(0)}\" bruger en pladsholder "
+                             f"i stedet for et rigtigt bilagsnummer - mangler at "
+                             f"blive udfyldt"))
 
             # 1) kombineret: "Bilag 3, punkt 2.1"
             for m in RE_BILAG_SEKTION.finditer(tekst):
