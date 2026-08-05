@@ -135,6 +135,22 @@ def validér_internt(docx):
         for m in kt.RE_BILAG_SEKTION.finditer(tekst):
             optaget.append((m.start(), m.end()))
 
+        # Henvisninger til EKSTERN lovgivning ("Udbudslovens § 134 a", "GDPR
+        # art. 6") - §-nummeret peger ikke på et afsnit i DETTE dokument, så
+        # det ville være forkert at tjekke det som en intern henvisning.
+        # Rapporteres som usikker (bør verificeres manuelt), ikke stille
+        # udeladt - loven indgår jo aldrig i det vi har at validere imod.
+        for m in kt.RE_EKSTERN_LOV.finditer(tekst):
+            if not ledig(m) or kt.er_definition(tekst, m):
+                continue
+            optaget.append((m.start(), m.end()))
+            lovnavn = m.group(1) or m.group(4)
+            fund.append(("usikker", m.group(0),
+                         kt.saetning(tekst, m.start(), m.end()),
+                         f"henvisning til ekstern lovgivning ({lovnavn}) - "
+                         f"kan ikke tjekkes mod dette dokuments egen "
+                         f"afsnitsnummerering; bør verificeres manuelt"))
+
         for m in kt.RE_SEKTION.finditer(tekst):
             if not ledig(m) or kt.er_definition(tekst, m):
                 continue

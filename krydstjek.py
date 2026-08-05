@@ -100,6 +100,27 @@ RE_PLADSHOLDER_BILAG = re.compile(
     rf"\b({BILAGSORD})\s+({PLADSHOLDER_BILAG_NR})(?!\w)",
     re.IGNORECASE)
 
+# Henvisninger til EKSTERN LOVGIVNING ("Udbudslovens § 134 a", "§ 6 i
+# Persondataloven", "Databeskyttelsesforordningens artikel 5", "GDPR art. 6").
+# Selve loven/forordningen indgår aldrig i den dokumentsamling der tjekkes -
+# den slags henvisninger kan derfor STRUKTURELT ALDRIG valideres som gyldige
+# eller ugyldige her (§-nummeret findes jo ikke i vores egen afsnitskortlægning,
+# og det ville være forkert at fange det som en ugyldig INTERN henvisning).
+# De markeres i stedet "usikker" med en opfordring til manuel verifikation.
+LOVSUFFIKS = (r"(?:lov(?:en|ens)?|bekendtgørelse(?:n|ns)?|forordning(?:en|ens)?"
+             r"|direktiv(?:et|ets)?|konvention(?:en|ens)?)")
+LOVNAVN = rf"(?:\w*{LOVSUFFIKS}|GDPR(?:'s)?)"
+LOV_PARAGRAF = r"§\s*\d+\s*[a-zæøå]?(?:,?\s*stk\.?\s*\d+)?(?:,?\s*nr\.?\s*\d+)?"
+LOV_ARTIKEL = r"(?:artikel|art\.)\s*\d+\s*[a-zæøå]?"
+LOV_REF_NR = rf"(?:{LOV_PARAGRAF}|{LOV_ARTIKEL})"
+RE_EKSTERN_LOV = re.compile(
+    rf"(?:"
+    rf"\b({LOVNAVN})\s*[:,]?\s*({LOV_REF_NR})"
+    rf"|"
+    rf"({LOV_REF_NR})\s+i\s+\b({LOVNAVN})\b"
+    rf")",
+    re.IGNORECASE)
+
 # Enkeltbogstavs-"numre" der i virkeligheden er danske småord, ikke bilagsnumre.
 # "bilag i det omfang", "bilag og kontrakt", "bilag e-mail" osv.
 BILAG_STOPORD = {"I", "O"}
@@ -379,7 +400,24 @@ def validér(docs, _bilag_override=None, _sektioner_override=None):
             def ledig(m):
                 return not any(a < m.end() and m.start() < b for a, b in optaget)
 
-            # 0) pladsholder-henvisninger: "punkt x.x", "Kapitel ?", "Bilag ??"
+            # 0) henvisninger til ekstern lovgivning: "Udbudslovens § 134 a",
+            # "§ 6 i Persondataloven", "GDPR art. 6". Loven selv indgår aldrig
+            # i dokumentsamlingen, så den slags kan strukturelt aldrig
+            # bekræftes ELLER afkræftes her - markeres usikker, ikke ugyldig,
+            # og skal køre FØR sektionsmønstrene nedenfor, ellers ville §-delen
+            # blive fanget som en (ugyldig) intern afsnitshenvisning.
+            for m in RE_EKSTERN_LOV.finditer(tekst):
+                if not ledig(m) or er_definition(tekst, m):
+                    continue
+                optaget.append((m.start(), m.end()))
+                lovnavn = m.group(1) or m.group(4)
+                fund.append(("usikker", navn, m.group(0),
+                             saetning(tekst, m.start(), m.end()),
+                             f"henvisning til ekstern lovgivning ({lovnavn}) - "
+                             f"loven indgår ikke i dokumentsamlingen og kan derfor "
+                             f"ikke valideres her; bør verificeres manuelt"))
+
+            # 0b) pladsholder-henvisninger: "punkt x.x", "Kapitel ?", "Bilag ??"
             # - skabelontekst hvor nummeret ikke er udfyldt. Altid ugyldig.
             for m in RE_PLADSHOLDER_SEKTION.finditer(tekst):
                 if not ledig(m) or er_definition(tekst, m):
