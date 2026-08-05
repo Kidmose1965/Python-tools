@@ -40,10 +40,15 @@ REFERRED INDHOLD ({ref_navn}):
 Giver denne henvisning semantisk mening?"""
 
 
-def analysér_batch(fund, dokument_indhold, max_per_minut=40):
+def analysér_batch(fund, dokument_indhold, max_per_minut=40, on_progress=None):
     """
     fund: liste af (samling, status, dok, ref, ctx, forkl) fra krydstjek
     dokument_indhold: dict {doknavn: fuldt tekstindhold}
+    on_progress: valgfri callback(i, total, ref) kaldt EFTER hver henvisning
+        er behandlet (både de der rammer AI'en og de der springes over) - så
+        et kaldende GUI kan vise fremdrift og undgå at fremstå "fastfrosset"
+        under det som (pga. fartbegrænsningen) kan tage adskillige minutter
+        for mange dokumenter.
 
     Returnerer: dict {(dok, ref, ctx): {"vurdering", "forklaring", "forslag"}}
     """
@@ -70,6 +75,8 @@ def analysér_batch(fund, dokument_indhold, max_per_minut=40):
                 "forklaring": "Referred indhold ikke tilgængeligt for semantisk analyse",
                 "forslag": None
             }
+            if on_progress:
+                on_progress(i + 1, len(kandidater), ref)
             continue
 
         prompt = byg_prompt(ref, ctx, ref_indhold, ref_navn)
@@ -96,6 +103,9 @@ def analysér_batch(fund, dokument_indhold, max_per_minut=40):
                 "forklaring": f"API-fejl: {str(e)[:80]}",
                 "forslag": None
             }
+
+        if on_progress:
+            on_progress(i + 1, len(kandidater), ref)
 
         # Rate limiting
         if i < len(kandidater) - 1:

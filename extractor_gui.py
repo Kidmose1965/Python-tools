@@ -446,11 +446,21 @@ class App:
             self.sæt_status("Ingen henvisninger fundet.")
             return
         self.sæt_status("Kører semantisk AI-analyse af ugyldige/usikre henvisninger ...")
+
+        def vis_fremdrift(i, total, ref):
+            # Kaldes fra semantik.analysér_batch() for hver behandlet
+            # henvisning - uden dette fryser vinduet totalt under hele
+            # AI-analysen (som pga. fartbegrænsning kan tage adskillige
+            # minutter for mange dokumenter), og Windows vil ofte mærke det
+            # som "Svarer ikke", selvom det arbejder helt normalt.
+            self.sæt_status(f"AI-analyse: {i}/{total} - {ref[:50]}")
+
         try:
             dok_indhold = kt.byg_dokument_indhold(samlinger)
             for d in kontekst_docs:
                 dok_indhold[d.path.name] = kt._dok_tekst(d)
-            semantik_resultater = semantik.analysér_batch(fund, dok_indhold)
+            semantik_resultater = semantik.analysér_batch(
+                fund, dok_indhold, on_progress=vis_fremdrift)
         except Exception:
             messagebox.showwarning("Semantisk analyse fejlede",
                                    "Semantisk analyse kunne ikke gennemføres:\n\n"
