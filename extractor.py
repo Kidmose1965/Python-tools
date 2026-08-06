@@ -263,6 +263,8 @@ class Docx:
         self.index_of = {}       # id(element) -> indeks i self.paras
         self.celle_ref = {}      # id(afsnit) -> "Tabel 4, række 7, kolonne 2"
         self._tabel_nr = 0
+        self.raekke_aendring = {}   # id(rækkens første afsnit) -> beskrivelse
+        self.raekke_afsnit = set()  # id(afsnit) der ligger i en ændret række
         body = self.doc.find(q("body"))
         if body is None:
             raise DocxFejl(
@@ -287,9 +289,37 @@ class Docx:
                 self._tabel_nr += 1
                 tnr = self._tabel_nr
                 for ri, tr in enumerate(child.findall(q("tr")), 1):
+                    # Hele rækker, der er slettet eller indsat med registrering
+                    # af ændringer, markeres med <w:ins>/<w:del> inde i
+                    # <w:trPr> - ikke som tekstændringer. Uden det kan man
+                    # ikke skelne "et ord er rettet inde i en række" fra
+                    # "hele rækken er væk".
+                    mark = None
+                    trpr = tr.find(q("trPr"))
+                    if trpr is not None:
+                        for tag, typ in ((q("del"), "Række slettet"),
+                                         (q("ins"), "Række indsat")):
+                            el = trpr.find(tag)
+                            if el is not None:
+                                mark = {"type": typ,
+                                        "forfatter": el.get(q("author")) or "",
+                                        "placering": f"Tabel {tnr}, række {ri}",
+                                        "foerste": None}
+                                break
                     for ci, tc in enumerate(tr.findall(q("tc")), 1):
-                        yield from self._iter_block(
-                            tc, True, f"Tabel {tnr}, række {ri}, kolonne {ci}")
+                        for p_el, it in self._iter_block(
+                                tc, True, f"Tabel {tnr}, række {ri}, kolonne {ci}"):
+                            if mark is not None:
+                                if mark["foerste"] is None:
+                                    mark["foerste"] = p_el
+                                    self.raekke_aendring[id(p_el)] = mark
+                                self.raekke_afsnit.add(id(p_el))
+                            yield p_el, it
+                    if mark is not None:
+                        mark["tekst"] = " | ".join(
+                            t for t in (para_text(pe, include_del=True)
+                                        for tc in tr.findall(q("tc"))
+                                        for pe in tc.iter(q("p"))) if t)
 
     # Overskrift med manuelt indtastet nummer, fx "3.1 - Dyrlæger" eller
     # "6.1.1\tRecept". Kræver at der står tekst efter nummeret.
@@ -612,6 +642,17 @@ def _placering(docx, p_el):
 def extract_trackchanges(docx, saml=True):
     out = []
     for p_el, _, _, _ in docx.paras:
+        mark = docx.raekke_aendring.get(id(p_el))
+        if mark is not None:
+            out.append({"Dokument": docx.path.name,
+                        "Sektion": docx.section_for(p_el),
+                        "Placering": mark["placering"],
+                        "Ændring": mark.get("tekst") or "(tom række)",
+                        "Type": mark["type"],
+                        "Kontekst": "",
+                        "Forfatter": mark["forfatter"]})
+        if id(p_el) in docx.raekke_afsnit:
+            continue          # rækken er rapporteret samlet ovenfor
         sektion = docx.section_for(p_el)
         kontekst = _kontekst(p_el)
         placering = _placering(docx, p_el)
