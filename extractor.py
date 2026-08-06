@@ -210,6 +210,7 @@ class Docx:
 
                 # styleId -> (visningsnavn, numPr-fra-style, basedOn)
                 self.styles = {}
+                self._style_elements = {}
                 styles_root = load_i_mappe("styles.xml")
                 if styles_root is not None:
                     for st in styles_root.findall(q("style")):
@@ -217,6 +218,7 @@ class Docx:
                         name_el = st.find(q("name"))
                         numpr = st.find(f"{q('pPr')}/{q('numPr')}")
                         based = st.find(q("basedOn"))
+                        self._style_elements[sid] = st
                         self.styles[sid] = (
                             name_el.get(q("val")) if name_el is not None else sid,
                             numpr,
@@ -258,6 +260,8 @@ class Docx:
         om de står i en tabel."""
         self.paras = []          # [(element, label|None, tekst, in_table)]
         self.index_of = {}       # id(element) -> indeks i self.paras
+        self.celle_ref = {}      # id(afsnit) -> "Tabel 4, række 7, kolonne 2"
+        self._tabel_nr = 0
         body = self.doc.find(q("body"))
         if body is None:
             raise DocxFejl(
@@ -266,18 +270,63 @@ class Docx:
                 "en gyldig .docx-fil.")
         for el, in_tbl in self._iter_block(body, False):
             label = self._para_label(el)
-            text = para_text(el)
+            text = para_text(el, include_del=True)
+            if label is None:
+                label = self._tekst_label(el, text)
             self.index_of[id(el)] = len(self.paras)
             self.paras.append((el, label, text, in_tbl))
 
-    def _iter_block(self, parent, in_table):
+    def _iter_block(self, parent, in_table, ref=None):
         for child in parent:
             if child.tag == q("p"):
+                if ref:
+                    self.celle_ref[id(child)] = ref
                 yield child, in_table
             elif child.tag == q("tbl"):
-                for tr in child.findall(q("tr")):
-                    for tc in tr.findall(q("tc")):
-                        yield from self._iter_block(tc, True)
+                self._tabel_nr += 1
+                tnr = self._tabel_nr
+                for ri, tr in enumerate(child.findall(q("tr")), 1):
+                    for ci, tc in enumerate(tr.findall(q("tc")), 1):
+                        yield from self._iter_block(
+                            tc, True, f"Tabel {tnr}, række {ri}, kolonne {ci}")
+
+    # Overskrift med manuelt indtastet nummer, fx "3.1 - Dyrlæger" eller
+    # "6.1.1\tRecept". Kræver at der står tekst efter nummeret.
+    _MANUELT_NR = re.compile(r"^\s*(\d+(?:\.\d+)*)\s*(?:[-–—.)\t ]\s*)(\S.*)$")
+
+    def _style_element(self, sid):
+        return self._style_elements.get(sid)
+
+    def _er_overskrift(self, p):
+        """True hvis afsnittet er en overskrift - enten via de indbyggede
+        typografinavne ("heading 1"..."heading 9") eller via outlineLvl,
+        som brugerdefinerede overskriftstypografier bruger."""
+        if re.match(r"heading [1-9]$", self.para_style_name(p) or "", re.I):
+            return True
+        ppr = p.find(q("pPr"))
+        if ppr is not None:
+            if ppr.find(q("outlineLvl")) is not None:
+                return True
+            ps = ppr.find(q("pStyle"))
+            if ps is not None:
+                sid = ps.get(q("val"))
+                for _ in range(10):          # følg basedOn-kæden
+                    if sid not in self.styles:
+                        break
+                    st_el = self._style_element(sid)
+                    if st_el is not None and st_el.find(
+                            f"{q('pPr')}/{q('outlineLvl')}") is not None:
+                        return True
+                    sid = self.styles[sid][2]
+        return False
+
+    def _tekst_label(self, p, text):
+        """Fallback for dokumenter uden automatisk nummerering: læs nummeret
+        ud af selve overskriftsteksten."""
+        if not text or not self._er_overskrift(p):
+            return None
+        m = self._MANUELT_NR.match(text)
+        return m.group(1) if m else None
 
     def _para_label(self, p):
         ppr = p.find(q("pPr"))
@@ -306,6 +355,8 @@ class Docx:
         while i >= 0:
             _, label, text, _ = self.paras[i]
             if label and label[:1].isdigit():
+                if text.lstrip().startswith(label):
+                    return text.strip()
                 return f"{label} - {text}".strip(" -")
             i -= 1
         return "Før nummereret sektion"
@@ -427,24 +478,69 @@ def extract_excel_comments(path):
 # ---------------------------------------------------------------------------
 # Udtræk 2: Trackchanges
 # ---------------------------------------------------------------------------
-def extract_trackchanges(docx):
+def _kontekst(p_el):
+    """Hele afsnittet med {-slettet-} / {+indsat+} markeret."""
+    ud = []
+
+    def gaa(el, tilstand):
+        for barn in el:
+            t = barn.tag
+            ny = tilstand
+            if t == q("ins"):
+                ny = "ins"
+            elif t == q("del"):
+                ny = "del"
+            elif t == q("pPr"):
+                continue          # afsnitsmærke-ændringer er ikke tekst
+            if t == q("t") and barn.text:
+                ud.append("{+%s+}" % barn.text if tilstand == "ins"
+                          else "{-%s-}" % barn.text if tilstand == "del"
+                          else barn.text)
+            elif t == q("delText") and barn.text:
+                ud.append("{-%s-}" % barn.text)
+            else:
+                gaa(barn, ny)
+
+    gaa(p_el, None)
+    return "".join(ud).strip()
+
+
+def _placering(docx, p_el):
+    return docx.celle_ref.get(id(p_el), "brødtekst")
+
+
+def extract_trackchanges(docx, saml=True):
     out = []
     for p_el, _, _, _ in docx.paras:
-        for node in p_el:
+        sektion = docx.section_for(p_el)
+        kontekst = _kontekst(p_el)
+        placering = _placering(docx, p_el)
+        fund = []
+        for node in p_el.iter():          # .iter(), ikke direkte børn - se note
             if node.tag == q("ins"):
                 txt = para_text(node)
                 if txt:
-                    out.append({"Dokument": docx.path.name,
-                                "Sektion": docx.section_for(p_el),
-                                "Ændring": txt, "Type": "Indsat",
-                                "Forfatter": node.get(q("author")) or ""})
+                    fund.append(("Indsat", txt, node.get(q("author")) or ""))
             elif node.tag == q("del"):
                 txt = para_text(node, include_del=True)
                 if txt:
-                    out.append({"Dokument": docx.path.name,
-                                "Sektion": docx.section_for(p_el),
-                                "Ændring": txt, "Type": "Slettet",
-                                "Forfatter": node.get(q("author")) or ""})
+                    fund.append(("Slettet", txt, node.get(q("author")) or ""))
+        if saml:
+            # Word splitter ofte én redigering op i mange <w:ins>/<w:del>
+            samlet = []
+            for typ, txt, forf in fund:
+                if samlet and samlet[-1][0] == typ and samlet[-1][2] == forf:
+                    samlet[-1][1] += txt
+                else:
+                    samlet.append([typ, txt, forf])
+            fund = [tuple(x) for x in samlet]
+        for typ, txt, forf in fund:
+            out.append({"Dokument": docx.path.name,
+                        "Sektion": sektion,
+                        "Placering": placering,
+                        "Ændring": txt, "Type": typ,
+                        "Kontekst": kontekst,
+                        "Forfatter": forf})
     return out
 
 
@@ -719,9 +815,18 @@ def main():
     elif args.cmd == "trackchanges":
         recs = [r for d in docs for r in (extract_trackchanges(d) or
                 [{"Dokument": d.path.name, "Ændring": "Ingen trackchanges"}])]
+        forfattere = {r.get("Forfatter") for r in recs if "Forfatter" in r}
+        if len(forfattere) == 1:
+            navn = next(iter(forfattere))
+            if navn:
+                antal = sum(1 for r in recs if "Forfatter" in r)
+                print(f'ADVARSEL: alle {antal} ændringer er tilskrevet "{navn}". Er '
+                      "filen et Word Compare-output, er forfatteren den der kørte "
+                      "sammenligningen - ikke den der lavede ændringerne.")
         out = args.output or "trackchanges.xlsx"
-        write_simple(recs, ["Dokument", "Sektion", "Ændring", "Type", "Forfatter"],
-                     out, [35, 50, 60, 10, 20])
+        write_simple(recs, ["Dokument", "Sektion", "Placering", "Ændring",
+                            "Type", "Kontekst", "Forfatter"],
+                     out, [35, 45, 26, 55, 10, 90, 20])
 
     elif args.cmd == "inputfelter":
         recs = [r for d in docs for r in (extract_highlights(d, args.farve) or
