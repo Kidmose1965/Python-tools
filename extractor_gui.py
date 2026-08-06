@@ -260,9 +260,10 @@ class App:
         sti = self.gem_som("kommentarer.xlsx")
         if not sti:
             return
-        ex.write_simple(recs, ["Dokument", "Nummer", "Tråd", "Svar på", "Kommentar",
-                               "Markeret tekst", "Initialer", "Nummereret sektion"], sti,
-                        [35, 9, 10, 10, 50, 50, 12, 50])
+        ex.write_simple(recs, ["Dokument", "Nummer", "Tråd", "Type", "Svar på",
+                               "Dato", "Kommentar", "Markeret tekst", "Initialer",
+                               "Nummereret sektion"], sti,
+                        [35, 8, 7, 9, 9, 11, 50, 50, 10, 40])
         self.færdig(sti, len(recs))
 
     def kommentarer_filtreret(self):
@@ -305,9 +306,10 @@ class App:
         sti = self.gem_som("kommentarer_filtreret.xlsx")
         if not sti:
             return
-        ex.write_simple(recs, ["Dokument", "Nummer", "Tråd", "Svar på", "Kommentar",
-                               "Markeret tekst", "Initialer", "Nummereret sektion"], sti,
-                        [35, 9, 10, 10, 50, 50, 12, 50])
+        ex.write_simple(recs, ["Dokument", "Nummer", "Tråd", "Type", "Svar på",
+                               "Dato", "Kommentar", "Markeret tekst", "Initialer",
+                               "Nummereret sektion"], sti,
+                        [35, 8, 7, 9, 9, 11, 50, 50, 10, 40])
         self.sæt_status(f"Udtræk gennemført: {len(recs)} rækker -> {Path(sti).name}")
         besked = f"{len(recs)} rækker skrevet til:\n{sti}"
         if antal_uden:

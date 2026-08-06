@@ -25,6 +25,7 @@ import re
 import sys
 import zipfile
 import xml.etree.ElementTree as ET
+from datetime import datetime
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
@@ -385,23 +386,67 @@ def para_text(p, include_del=False):
 # ---------------------------------------------------------------------------
 # Udtræk 1: Kommentarer
 # ---------------------------------------------------------------------------
+_DATOFORMATER = (
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d",
+    "%d/%m/%Y %H:%M:%S",
+    "%d/%m/%Y",
+    "%d-%m-%Y %H:%M:%S",
+    "%d-%m-%Y",
+)
+
+
+def _normaliser_dato(raw):
+    """Tolker w:date i flere kendte formater og returnerer altid ÅÅÅÅ-MM-DD.
+    Word skriver typisk ISO 8601 (med eller uden Z-suffiks), men enkelte
+    kommentarer - fx tilføjet af et andet værktøj - kan have et helt andet
+    format. Kan værdien ikke tolkes, returneres den rå streng uændret;
+    funktionen returnerer aldrig tom streng (for en ikke-tom input) og
+    kaster aldrig."""
+    if not raw:
+        return raw
+    s = raw.strip()
+    if s.endswith("Z"):
+        s = s[:-1]
+    for fmt in _DATOFORMATER:
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return raw
+
+
+def _naeste_ikke_tomme_tekst(docx, a_el, maks=3):
+    """Nærmeste efterfølgende ikke-tomme afsnit efter ankeret, højst `maks`
+    afsnit frem. Bruges som fallback for punktkommentarer hvor selve
+    ankerafsnittet er tomt (fx en tom tabelcelle eller et afstandsafsnit)."""
+    i = docx.index_of.get(id(a_el))
+    if i is None:
+        return ""
+    for j in range(i + 1, min(i + 1 + maks, len(docx.paras))):
+        txt = para_text(docx.paras[j][0])
+        if txt:
+            return txt
+    return ""
+
+
 def extract_comments(docx):
     out = []
     if docx.comments_xml is None:
         return out
     meta = {}
-    para_to_cid = {}   # w14:paraId (kommentarens sidste afsnit) -> kommentar-id
+    para_to_cid = {}
     for c in docx.comments_xml.findall(q("comment")):
         cid = c.get(q("id"))
         ps = c.findall(q("p"))
         text = "\n".join(filter(None, (para_text(p) for p in ps)))
-        meta[cid] = (c.get(q("initials")) or c.get(q("author")) or "", text)
+        meta[cid] = (c.get(q("initials")) or c.get(q("author")) or "",
+                     text, _normaliser_dato(c.get(q("date")) or ""))
         if ps:
             pid = ps[-1].get(W14 + "paraId")
             if pid:
                 para_to_cid[pid] = cid
 
-    # trådstruktur: commentsExtended.xml kobler svar til forælder via paraId
     parent_of = {}
     if docx.comments_ext_xml is not None:
         for cex in docx.comments_ext_xml.iter(W15 + "commentEx"):
@@ -410,40 +455,95 @@ def extract_comments(docx):
             if pid in para_to_cid and parent_pid in para_to_cid:
                 parent_of[para_to_cid[pid]] = para_to_cid[parent_pid]
 
-    # find scope-tekst og ankerafsnit for hver kommentar
-    scope_text, anchor, active = {}, {}, set()
-    for p_el, _, _, _ in docx.paras:
-        for node in p_el.iter():
+    # scope-tekst, ankerafsnit OG dokumentposition.
+    # Word tildeler IKKE kommentar-id'er i dokumentrækkefølge (nogle id'er er
+    # tilfældige 32-bit tal), så positionen skal aflæses af dokumentet selv.
+    scope_dele, anchor, anchor_pos, active = {}, {}, {}, set()
+    for p_i, (p_el, _, _, _) in enumerate(docx.paras):
+        loebende = {cid: [] for cid in active}
+        for n_i, node in enumerate(p_el.iter()):
             if node.tag == q("commentRangeStart"):
                 cid = node.get(q("id"))
                 active.add(cid)
-                scope_text.setdefault(cid, [])
+                loebende.setdefault(cid, [])
+                scope_dele.setdefault(cid, [])
                 anchor.setdefault(cid, p_el)
+                anchor_pos.setdefault(cid, (p_i, n_i))
             elif node.tag == q("commentRangeEnd"):
                 active.discard(node.get(q("id")))
             elif node.tag == q("t") and node.text and active:
                 for cid in active:
-                    scope_text[cid].append(node.text)
+                    loebende.setdefault(cid, []).append(node.text)
             elif node.tag == q("commentReference"):
-                anchor.setdefault(node.get(q("id")), p_el)
+                cid = node.get(q("id"))
+                anchor.setdefault(cid, p_el)
+                anchor_pos.setdefault(cid, (p_i, n_i))
+        # ét afsnit/én tabelcelle = ét stykke, så tekst fra to celler ikke
+        # løber sammen ("PakningsstoerrelseTekstF.eks. ...")
+        for cid, dele in loebende.items():
+            t = "".join(dele).strip()
+            if t:
+                scope_dele.setdefault(cid, []).append(t)
 
-    ordered = sorted(meta.items(), key=lambda kv: int(kv[0]))
-    num_of = {cid: n for n, (cid, _) in enumerate(ordered, 1)}
-    for n, (cid, (initials, text)) in enumerate(ordered, 1):
-        sec = docx.section_for(anchor[cid]) if cid in anchor else "Ukendt placering"
-        if cid in parent_of:
-            root, hop = cid, 0
-            while root in parent_of and hop < 50:
-                root = parent_of[root]
-                hop += 1
-            traad = "Svar"
-            svar_paa = f"Nr. {num_of[root]}"
-        else:
-            traad, svar_paa = "Ny tråd", ""
+    SIDST = (10 ** 9, 0)
+
+    def pos(cid):
+        return anchor_pos.get(cid, SIDST)
+
+    # Traade: rod foerst, derefter svar sorteret efter dato (id-raekkefoelge
+    # er ubrugelig - se ovenfor). Roden bestemmer traadens plads i arket.
+    def rod(cid):
+        r, hop = cid, 0
+        while r in parent_of and hop < 50:
+            r = parent_of[r]
+            hop += 1
+        return r
+
+    svar_til = {}
+    for cid in meta:
+        r = rod(cid)
+        if r != cid:
+            svar_til.setdefault(r, []).append(cid)
+
+    raekkefoelge = []
+    for r in sorted((c for c in meta if rod(c) == c), key=lambda c: (pos(c), meta[c][2])):
+        raekkefoelge.append(r)
+        for s_cid in sorted(svar_til.get(r, []), key=lambda c: (meta[c][2], pos(c))):
+            raekkefoelge.append(s_cid)
+    for cid in meta:                      # sikkerhedsnet
+        if cid not in raekkefoelge:
+            raekkefoelge.append(cid)
+
+    num_of = {cid: n for n, cid in enumerate(raekkefoelge, 1)}
+    traad_nr, t = {}, 0
+    for cid in raekkefoelge:
+        r = rod(cid)
+        if r not in traad_nr:
+            t += 1
+            traad_nr[r] = t
+
+    for cid in raekkefoelge:
+        initials, text, dato = meta[cid]
+        a_el = anchor.get(cid)
+        sec = docx.section_for(a_el) if a_el is not None else "Ukendt placering"
+        markeret = " | ".join(scope_dele.get(cid, [])).strip()
+        if not markeret and a_el is not None:
+            # punktkommentar: markoeren stod i teksten uden at der var
+            # markeret noget. Vis afsnittet den haenger paa, ellers staar
+            # kolonnen tom og kommentaren er ulaeselig ude af kontekst.
+            # Er ankerafsnittet selv tomt (fx en tom tabelcelle), fald
+            # videre til det naermeste efterfoelgende ikke-tomme afsnit.
+            afsnit = para_text(a_el) or _naeste_ikke_tomme_tekst(docx, a_el)
+            if afsnit:
+                markeret = f"(punktkommentar) {afsnit[:300]}"
+        r = rod(cid)
         out.append({
-            "Dokument": docx.path.name, "Nummer": n, "Tråd": traad,
-            "Svar på": svar_paa, "Kommentar": text,
-            "Markeret tekst": "".join(scope_text.get(cid, [])).strip(),
+            "Dokument": docx.path.name, "Nummer": num_of[cid],
+            "Tråd": traad_nr[r],
+            "Type": "Ny tråd" if r == cid else "Svar",
+            "Svar på": "" if r == cid else f"Nr. {num_of[parent_of[cid]]}",
+            "Dato": dato, "Kommentar": text,
+            "Markeret tekst": markeret,
             "Initialer": initials, "Nummereret sektion": sec,
         })
     return out
@@ -680,6 +780,10 @@ def cell_text(docx, tc):
 # ---------------------------------------------------------------------------
 def write_simple(records, headers, outfile, widths):
     wb = Workbook()
+    # openpyxl stempler ellers created/modified med "nu", hvilket gør to
+    # ellers identiske kørsler forskellige på byte-niveau (kun i
+    # docProps/core.xml - selve dataarket er upåvirket).
+    wb.properties.created = wb.properties.modified = datetime(1970, 1, 1)
     ws = wb.active
     for col, (h, w) in enumerate(zip(headers, widths), 2):
         c = ws.cell(row=1, column=col, value=h)
@@ -808,9 +912,10 @@ def main():
                 [{"Dokument": d.path.name, "Kommentar": "Ingen kommentarer",
                   "__ingen_fund__": True}])]
         out = args.output or "kommentarer.xlsx"
-        write_simple(recs, ["Dokument", "Nummer", "Tråd", "Svar på", "Kommentar",
-                            "Markeret tekst", "Initialer", "Nummereret sektion"], out,
-                     [35, 9, 10, 10, 50, 50, 12, 50])
+        write_simple(recs, ["Dokument", "Nummer", "Tråd", "Type", "Svar på",
+                            "Dato", "Kommentar", "Markeret tekst", "Initialer",
+                            "Nummereret sektion"], out,
+                     [35, 8, 7, 9, 9, 11, 50, 50, 10, 40])
 
     elif args.cmd == "trackchanges":
         recs = [r for d in docs for r in (extract_trackchanges(d) or
