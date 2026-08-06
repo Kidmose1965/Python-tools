@@ -335,8 +335,9 @@ class App:
         sti = self.gem_som("trackchanges.xlsx")
         if not sti:
             return
-        ex.write_simple(recs, ["Dokument", "Sektion", "Ændring", "Type", "Forfatter"],
-                        sti, [35, 50, 60, 10, 20])
+        ex.write_simple(recs, ["Dokument", "Sektion", "Placering", "Ændring",
+                               "Type", "Kontekst", "Forfatter"],
+                        sti, [35, 45, 26, 55, 10, 90, 20])
         self.færdig(sti, len(recs))
 
     def inputfelter(self, farve):
