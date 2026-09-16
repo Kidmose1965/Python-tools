@@ -426,6 +426,18 @@ _DATOFORMATER = (
 )
 
 
+DANSKE_MAANEDER = (
+    "januar", "februar", "marts", "april", "maj", "juni",
+    "juli", "august", "september", "oktober", "november", "december",
+)
+
+
+def dansk_dato(dt=None):
+    """Dags dato som '16. september 2026' - bruges i foreslaaede filnavne."""
+    dt = dt or datetime.now()
+    return f"{dt.day}. {DANSKE_MAANEDER[dt.month - 1]} {dt.year}"
+
+
 def _normaliser_dato(raw):
     """Tolker w:date i flere kendte formater og returnerer altid ÅÅÅÅ-MM-DD.
     Word skriver typisk ISO 8601 (med eller uden Z-suffiks), men enkelte
@@ -952,7 +964,7 @@ def main():
         recs = [r for d in docs for r in (extract_comments(d) or
                 [{"Dokument": d.path.name, "Kommentar": "Ingen kommentarer",
                   "__ingen_fund__": True}])]
-        out = args.output or "kommentarer.xlsx"
+        out = args.output or f"Emnelog over kommentarer {dansk_dato()}.xlsx"
         write_simple(recs, ["Dokument", "Nummer", "Tråd", "Type", "Svar på",
                             "Dato", "Kommentar", "Markeret tekst", "Initialer",
                             "Nummereret sektion"], out,

@@ -83,15 +83,10 @@ class App:
             ("Udtræk kommentarer", self.kommentarer),
             ("Udtræk kommentarer (kun dokumenter med fund)", self.kommentarer_filtreret),
             ("Udtræk trackchanges", self.trackchanges),
-            ("Udtræk kundens inputfelter (grøn)", lambda: self.inputfelter("groen")),
-            ("Udtræk tilbudsgivers inputfelter (gul)", lambda: self.inputfelter("gul")),
         ])
         self._gruppe(krop, "ANALYSE", [
             ("Skab kravmatrix", self.kravmatrix),
             ("Skab kravmatrix med kommentarer", self.kravmatrix_kommentarer),
-            ("Krydstjek (uden semantisk kontrol)", self.krydstjek),
-            ("Krydstjek med semantisk kontrol", self.krydstjek_semantik),
-            ("Tjek interne henvisninger", self.intern_tjek),
         ])
         self._gruppe(krop, "HJÆLP", [
             ("Vis dokumentets typografier (styles)", self.styles),
