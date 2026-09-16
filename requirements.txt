@@ -1,0 +1,4 @@
+openpyxl
+Pillow
+python-dotenv
+anthropic
