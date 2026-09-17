@@ -1,0 +1,20 @@
+{
+  "kunde": "",
+  "udbud": "",
+  "fase_navne": {
+    "Udformning af udbudsmateriale": "Udbudsmateriale",
+    "Prækvalifikationsfase": "Prækvalifikation",
+    "Tilbudsfasen (indledende tilbud)": "Tilbudsfasen\n(indledende tilbud)",
+    "Forhandlingsrunde 1": "Forhandlingsrunde 1",
+    "Tilbudsfasen (endeligt tilbud)": "Tilbudsfasen\n(endeligt tilbud)",
+    "Standstill": "Standstill"
+  },
+  "korte_navne": {
+    "Udarbejdelse af afslagsbreve + opfordring til afgivelse af indledende tilbud":
+      "Afslagsbreve + opfordring til afgivelse af indledende tilbud"
+  },
+  "ekstra_milepaele": [
+    {"fase": "Udformning af udbudsmateriale", "navn": "Offentliggørelse af udbud", "dato": "2026-10-02", "blaa": true}
+  ],
+  "ikke_i_belastning": ["Udformning af udbudsmateriale"]
+}

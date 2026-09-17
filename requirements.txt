@@ -1,0 +1,11 @@
+# Tool til udbudstidsplaner (Excel/MS Project -> visuel PowerPoint-tidsplan)
+# Se "Tool til udbudstidsplaner/README.md" for brug.
+#
+# Risiko: pptx_render.py bruger enkelte private python-pptx-API'er (fx
+# shape.fill.fore_color._xFill til gennemsigtighed paa ferie-/helligdags-
+# skravering). Disse kan i teorien aendre sig mellem python-pptx-versioner -
+# hvis renderingen fejler efter en opgradering, er det foerste sted at kigge.
+openpyxl
+Pillow
+python-pptx
+pytest
