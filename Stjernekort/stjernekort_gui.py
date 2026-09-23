@@ -86,6 +86,8 @@ class App:
         self.blueprint_xlsx_var = StringVar()
         self.template_var = StringVar(value=str(FORVALGT_TEMPLATE) if FORVALGT_TEMPLATE.exists() else "")
         self.ud_pptx_var = StringVar(value=str(HER / "ud" / "blueprint.pptx"))
+        self.kunde_var = StringVar()
+        self.udbud_var = StringVar()
 
         self._sektion_overskrift(krop, "1. Udtræk - kontrakt + bilag → Excel (masteren)")
         self._felt(krop, "Mappe med docx (kontrakt + bilag)", self.docx_mappe_var,
@@ -104,6 +106,8 @@ class App:
                   self.vælg_blueprint_xlsx, "Gennemse ...")
         self._felt(krop, "Template (.pptx)", self.template_var,
                   self.vælg_template, "Gennemse ...")
+        self._felt(krop, "Kundenavn (valgfri - vises i dias-titlen)", self.kunde_var)
+        self._felt(krop, "Navn på udbud/projekt (valgfri - vises i dias-titlen)", self.udbud_var)
         self._felt(krop, "Output PowerPoint (.pptx)", self.ud_pptx_var,
                   self.vælg_pptx_output, "Gem som ...")
 
@@ -262,7 +266,8 @@ class App:
         self.sæt_status(f"Læser {Path(xlsx).name} ...")
         bp = excel_io.laes(xlsx)
         self.sæt_status("Tegner blueprint ...")
-        generer_pptx(bp, template, ud)
+        generer_pptx(bp, template, ud, kunde=self.kunde_var.get().strip(),
+                    udbud=self.udbud_var.get().strip())
 
         self.sæt_status(f"Færdig -> {Path(ud).name}")
         if messagebox.askyesno("Blueprint gennemført", f"Skrevet til:\n{ud}\n\nÅbne filen nu?"):

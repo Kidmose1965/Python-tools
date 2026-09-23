@@ -97,11 +97,20 @@ def _behold_kun_dias(prs, indeks: int):
             sld_ids.remove(sld)
 
 
+def _titel(kunde: str, udbud: str) -> str:
+    dele = [d for d in (udbud, kunde) if d]
+    return "Kontraktens blueprint – " + " – ".join(dele) if dele else "Kontraktens blueprint"
+
+
 def generer(bp: Blueprint, template: str | Path, ud: str | Path, konfig: dict = TEMPLATE_KONFIG,
-            vis_typer: tuple[str, ...] = ("kontraktindgåelse", "faseafslutning", "prøve", "ophør")):
-    """Tegner blueprintet. Frister vises kun, hvis "frist" er med i vis_typer."""
+            vis_typer: tuple[str, ...] = ("kontraktindgåelse", "faseafslutning", "prøve", "ophør"),
+            kunde: str = "", udbud: str = ""):
+    """Tegner blueprintet. Frister vises kun, hvis "frist" er med i vis_typer.
+    Angives kunde og/eller udbud, saettes de i dias-titlen; ellers bruges templatens egen titel."""
     prs = Presentation(str(template))
     slide = prs.slides[konfig["dias"]]
+    if (kunde or udbud) and slide.shapes.title is not None:
+        _saet_tekst(slide.shapes.title, _titel(kunde, udbud))
     stempler = {
         "milepael": _figur(slide, konfig["milepael_gruppe"]),
         "aktivitet": {k: _figur(slide, v) for k, v in konfig["aktivitet"].items()},
