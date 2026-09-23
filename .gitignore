@@ -10,3 +10,6 @@ Extractor.spec
 
 # Secrets
 .env
+
+# Stjernekort
+Stjernekort/ud/
