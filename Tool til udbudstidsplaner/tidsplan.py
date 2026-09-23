@@ -3,9 +3,15 @@ Visuel udbudstidsplan - generisk skabelon
 Brug:  python tidsplan.py <plan.xlsx> --idag 2026-09-10 --kunde "Min Kunde" --udbud "Mit udbud" [-o Tidsplan_visuel.pptx]
        python tidsplan.py <plan.xlsx> --idag 2026-09-10 --config konfigurationer/mit_udbud.json
 
-Input: Excel-udtraek fra MS Project (kolonner B-E: Task Name, Duration, Start, Finish; header i
-raekke 2, data fra raekke 3). Kolonne F/G (Predecessors/Successors) laeses ikke.
-  - Fase-raekker: fed, ikke-indrykket navn. Aktiviteter: indrykket med mellemrum/tab.
+Input: Excel-udtraek fra MS Project. Overskriftsraekken (Task Name, Duration, Start, Finish) findes
+automatisk i de foerste 20 raekker, og kolonnerne slaas op efter overskrift, saa titel-/tomme raekker
+foran overskriften og en anden kolonnerakkefoelge er ok (se find_overskrift() for gyldige overskrifter,
+ogsaa danske). Data laeses fra raekken efter overskriften; gentagne overskriftsraekker (sideskift)
+springes over. Findes ingen overskrift, bruges det gamle layout (header i raekke 2, kolonne B-E) med en
+advarsel. Andre kolonner (fx ID, Predecessors/Successors) laeses ikke.
+  - Fase-raekker: fed, ikke-indrykket navn. Aktiviteter: indrykket med mellemrum/tab. Er hele
+    hierarkiet indrykket (fx faser med 3 mellemrum, aktiviteter med 6), er en fed raekke ogsaa en fase,
+    naar der er dybere indrykkede raekker under den, eller den staar paa samme niveau som fasen.
   - Farve i kolonne B (Task Name) er semantisk - se FARVER nedenfor. Hvid/ukendt = neutral (graa bjaelke).
   - 0 dage = punktaktivitet. "Milepael:"-praefiks eller blaa (00B0F0) udfyldning -> blaa officiel
     milepael (praefikset fjernes fra visningsnavnet). ED7D31 -> moede (orange markoer ved 0 dage,
@@ -27,6 +33,7 @@ Kraever: Python (openpyxl, Pillow, python-pptx) - se pptx_render.py i samme mapp
 import argparse, json, math, os, re, sys, datetime as dt
 from dataclasses import dataclass, field
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 from PIL import ImageFont
 
 D = dt.date
@@ -185,23 +192,91 @@ def parse_dato(s):
         raise ValueError(f"Ugyldig dato: {s!r} ({ex}).") from ex
 
 
+# Overskrifts-aliaser (sammenlignes med smaa bogstaver og trimmede mellemrum) -> felt
+OVERSKRIFT_ALIASER = {
+    "navn": {"task name", "name", "opgavenavn", "navn", "aktivitet", "aktivitetsnavn", "opgave"},
+    "varighed": {"duration", "varighed", "længde", "laengde"},
+    "start": {"start", "startdato", "start date", "begyndelse"},
+    "slut": {"finish", "slut", "slutdato", "finish date", "afslutning", "færdig"},
+}
+# Engelske feltnavne bruges i fejlbeskeder, uanset hvilket sprog arket bruger
+FELT_LABEL = {"navn": "Task Name", "varighed": "Duration", "start": "Start", "slut": "Finish"}
+
+# Varighedsenhed -> faktor til arbejdsdage
+_ENHEDER = {}
+for _faktor, _navne in (
+    (1, "d day days dag dage"),
+    (5, "w wk wks week weeks uge uger"),
+    (20, "mo mon mons month months md mdr måned måneder"),
+    (1 / 8, "h hr hrs hour hours t time timer"),
+    (1 / 480, "m min mins minute minutes minut minutter"),
+):
+    _ENHEDER.update({n: _faktor for n in _navne.split()})
+
+
 def parse_varighed(v):
-    """Parser Duration fra en Excel-celle til et helt antal dage. Accepterer
-    tal (int/float, som Excel kan levere hvis kolonnen ikke er tekstformateret)
-    og tekststrenge som '0 days', '1 day', '5 days' samt de danske varianter
-    '0 dage', '1 dag', '5 dage'. Kaster ValueError med den oprindelige vaerdi
-    hvis der ikke kan udledes et heltal."""
+    """Parser Duration fra en Excel-celle til et helt antal arbejdsdage. Accepterer
+    tal (int/float) og tekst som '5 days', '5 dage', '0,5 dage', '2.5 days' og
+    estimater ('5 days?'). Enheder omregnes til arbejdsdage: uger (w, wk, week(s),
+    uge/uger) x5, maaneder (mo, mon, month(s), md, mdr, maaned(er)) x20, timer (h,
+    hr, hour(s), t, time/timer) /8, minutter (m, min, minute(s), minut(ter)) /480.
+    Et foranstillet 'e' (elapsed, fx '10 edays') ignoreres; ingen eller ukendt
+    enhed betyder dage. Resultatet rundes til nærmeste hele tal (.5 op), men en
+    varighed over 0 bliver mindst 1, saa den aldrig fejlagtigt bliver en milepael
+    - kun 0 giver 0. Kaster ValueError med den oprindelige vaerdi hvis der ikke
+    kan udledes et tal (fx 'Duration', 'ukendt', None)."""
+    fejl = ValueError(f"Ugyldig varighed: {v!r} - forventede et tal, evt. med enhed "
+                      "(fx '5 days' eller '5 dage').")
     if isinstance(v, bool):
-        raise ValueError(f"Ugyldig varighed: {v!r} - forventede et heltal, evt. med enhed "
-                         "(fx '5 days' eller '5 dage').")
+        raise fejl
     if isinstance(v, (int, float)):
-        return int(v)
-    tekst = "" if v is None else str(v).strip()
-    m = re.match(r"(\d+)", tekst)
-    if not m:
-        raise ValueError(f"Ugyldig varighed: {v!r} - forventede et heltal, evt. med enhed "
-                         "(fx '5 days' eller '5 dage').")
-    return int(m.group(1))
+        antal, faktor = float(v), 1
+    else:
+        tekst = "" if v is None else str(v).strip().lower()
+        m = re.match(r"(\d+(?:[.,]\d+)?)\s*([a-zæøå]*)", tekst)
+        if not m:
+            raise fejl
+        antal = float(m.group(1).replace(",", "."))
+        enhed = m.group(2)
+        if enhed.startswith("e") and enhed[1:] in _ENHEDER:   # elapsed: "edays", "ewks" ...
+            enhed = enhed[1:]
+        faktor = _ENHEDER.get(enhed, 1)
+    if not math.isfinite(antal) or antal < 0:
+        raise fejl
+    dage = antal * faktor
+    return 0 if dage == 0 else max(1, int(dage + 0.5))
+
+
+def _normaliser(v):
+    return " ".join(str(v).lower().split()) if v is not None else ""
+
+
+def find_overskrift(ws, maks=20):
+    """Finder overskriftsraekken i de foerste `maks` raekker af arket. En raekke er
+    overskrift, naar den indeholder baade en navne- og en varighedsoverskrift
+    (sammenligning uden forskel paa store/smaa bogstaver og med trimmede
+    mellemrum). Gyldige overskrifter (OVERSKRIFT_ALIASER):
+      navn:     task name, name, opgavenavn, navn, aktivitet, aktivitetsnavn, opgave
+      varighed: duration, varighed, længde, laengde
+      start:    start, startdato, start date, begyndelse
+      slut:     finish, slut, slutdato, finish date, afslutning, færdig
+    Returnerer (raekkenummer, {felt: kolonnenummer}) med felterne navn, varighed,
+    start og slut, eller None hvis ingen overskrift findes. Kaster ValueError hvis
+    overskriften findes, men Start- eller Finish-kolonnen mangler."""
+    for r in range(1, min(maks, ws.max_row) + 1):
+        felter = {}
+        for c in range(1, ws.max_column + 1):
+            tekst = _normaliser(ws.cell(r, c).value)
+            for felt, aliaser in OVERSKRIFT_ALIASER.items():
+                if tekst in aliaser and felt not in felter:
+                    felter[felt] = c
+        if "navn" in felter and "varighed" in felter:
+            mangler = [FELT_LABEL[f] for f in ("start", "slut") if f not in felter]
+            if mangler:
+                raise ValueError(f"Overskriftsrækken (Excel-række {r}) mangler kolonnen "
+                                 f"{' og '.join(mangler)}.")
+            return r, felter
+    return None
 
 
 def _celle_farve(cell, raekke, navn, advarsler):
@@ -229,27 +304,74 @@ def _celle_farve(cell, raekke, navn, advarsler):
     return "FFFFFF"
 
 
+def _indrykning(tekst):
+    """Antal foranstillede mellemrum/tabs i et navn."""
+    tekst = str(tekst)
+    return len(tekst) - len(tekst.lstrip())
+
+
+def _naeste_navneraekke(ws, r, navn_kol):
+    """Nummeret paa den naeste raekke efter r med et navn, eller None."""
+    for nr in range(r + 1, ws.max_row + 1):
+        v = ws.cell(nr, navn_kol).value
+        if v is not None and str(v).strip():
+            return nr
+    return None
+
+
+def _har_underraekker(ws, r, navn_kol, indrykning):
+    """True hvis den naeste raekke med et navn efter raekke r er indrykket dybere end `indrykning`."""
+    nr = _naeste_navneraekke(ws, r, navn_kol)
+    return nr is not None and _indrykning(ws.cell(nr, navn_kol).value) > indrykning
+
+
+def _er_indrykket_fase(ws, r, navn_kol):
+    """True hvis raekke r er fed, indrykket og har dybere indrykkede raekker under sig."""
+    c = ws.cell(r, navn_kol)
+    ind = _indrykning(c.value)
+    return bool(c.font.b) and ind > 0 and _har_underraekker(ws, r, navn_kol, ind)
+
+
 def laes_plan(sti, konfig=None):
-    """Laeser et MS Project Excel-udtraek (header i raekke 2, data fra raekke 3;
-    kolonne B-E = Task Name/Duration/Start/Finish er paakraevede, F/G laeses
-    ikke) og returnerer (lanes, advarsler). Kaster ValueError med Excel-
-    raekkenummer, kolonne/felt og den oprindelige vaerdi ved ugyldigt input."""
+    """Laeser et MS Project Excel-udtraek og returnerer (lanes, advarsler).
+    Overskriftsraekken (Task Name/Duration/Start/Finish) findes automatisk i de
+    foerste 20 raekker med find_overskrift(), og kolonnerne slaas op efter
+    overskrift - raekkefoelgen er ligegyldig, og titel-/tomme raekker foran
+    overskriften er ok. Data laeses fra raekken efter overskriften; gentagne
+    overskriftsraekker (fx ved sideskift) springes over. Findes ingen overskrift,
+    bruges det gamle layout (overskrift i raekke 2, kolonne B-E) og der tilfoejes en
+    advarsel; mangler arket ogsaa kolonne B-E, kastes en ValueError. Andre kolonner
+    (fx ID, Predecessors/Successors) laeses ikke. Kaster ValueError med Excel-
+    raekkenummer, kolonne/felt (fx "kolonne D (Duration)") og den oprindelige
+    vaerdi ved ugyldigt input."""
     konfig = konfig or Konfig()
     ws = load_workbook(sti).active
-    if ws.max_column < 5:
-        raise ValueError("Excel-arket mangler en eller flere af de påkrævede kolonner B-E "
-                         "(Task Name, Duration, Start, Finish).")
     advarsler = []
+    fundet = find_overskrift(ws)
+    if fundet:
+        overskrift_raekke, kol = fundet
+    else:
+        if ws.max_column < 5:
+            raise ValueError("Excel-arket mangler en eller flere af de påkrævede kolonner B-E "
+                             "(Task Name, Duration, Start, Finish).")
+        overskrift_raekke, kol = 2, dict(navn=2, varighed=3, start=4, slut=5)
+        advarsler.append("Overskriftsrække (Task Name/Duration/Start/Finish) ikke fundet i de første "
+                         "20 rækker - bruger standardlayoutet: overskrift i række 2, kolonne B-E.")
+    bogstav = {felt: get_column_letter(c) for felt, c in kol.items()}
     lanes, cur = [], None
-    for r in range(3, ws.max_row + 1):
-        c = ws.cell(r, 2)
+    fase_indrykning = 0                                  # indrykning (antal tegn) for den aktuelle fase
+    for r in range(overskrift_raekke + 1, ws.max_row + 1):
+        c = ws.cell(r, kol["navn"])
         navn_raw = c.value
-        c3, c4, c5 = ws.cell(r, 3).value, ws.cell(r, 4).value, ws.cell(r, 5).value
+        c3, c4, c5 = (ws.cell(r, kol[f]).value for f in ("varighed", "start", "slut"))
+        if (_normaliser(navn_raw) in OVERSKRIFT_ALIASER["navn"]
+                and _normaliser(c3) in OVERSKRIFT_ALIASER["varighed"]):
+            continue                                     # gentaget overskriftsraekke (sideskift)
         navn_tom = navn_raw is None or str(navn_raw).strip() == ""
         if navn_tom and all(v is None or str(v).strip() == "" for v in (c3, c4, c5)):
             continue                                     # helt blank raekke - ignoreres
         if navn_tom:
-            raise ValueError(f"Excel-række {r}: Task Name (kolonne B) mangler.")
+            raise ValueError(f"Excel-række {r}: Task Name (kolonne {bogstav['navn']}) mangler.")
         raw = str(navn_raw)
         navn = raw.strip()
         indrykket = bool(re.match(r"^\s", raw))
@@ -259,16 +381,16 @@ def laes_plan(sti, konfig=None):
         try:
             varighed = parse_varighed(varighed_raw)
         except ValueError as ex:
-            raise ValueError(f"Excel-række {r} (\"{navn}\"): kolonne C (Duration) - {ex}") from ex
+            raise ValueError(f"Excel-række {r} (\"{navn}\"): kolonne {bogstav['varighed']} (Duration) - {ex}") from ex
         milepael = varighed == 0
 
         start_raw = c4
         if start_raw is None or str(start_raw).strip() == "":
-            raise ValueError(f"Excel-række {r} (\"{navn}\"): kolonne D (Start) mangler en startdato.")
+            raise ValueError(f"Excel-række {r} (\"{navn}\"): kolonne {bogstav['start']} (Start) mangler en startdato.")
         try:
             s = parse_dato(start_raw)
         except ValueError as ex:
-            raise ValueError(f"Excel-række {r} (\"{navn}\"): kolonne D (Start) - {ex}") from ex
+            raise ValueError(f"Excel-række {r} (\"{navn}\"): kolonne {bogstav['start']} (Start) - {ex}") from ex
 
         e_raw = c5
         if milepael:
@@ -278,11 +400,11 @@ def laes_plan(sti, konfig=None):
                 e = None   # slutdato bruges ikke for en milepael, saa en ugyldig/manglende vaerdi er uden betydning
         else:
             if e_raw is None or str(e_raw).strip() == "":
-                raise ValueError(f"Excel-række {r} (\"{navn}\"): kolonne E (Finish) mangler en slutdato.")
+                raise ValueError(f"Excel-række {r} (\"{navn}\"): kolonne {bogstav['slut']} (Finish) mangler en slutdato.")
             try:
                 e = parse_dato(e_raw)
             except ValueError as ex:
-                raise ValueError(f"Excel-række {r} (\"{navn}\"): kolonne E (Finish) - {ex}") from ex
+                raise ValueError(f"Excel-række {r} (\"{navn}\"): kolonne {bogstav['slut']} (Finish) - {ex}") from ex
             if e < s:
                 raise ValueError(f"Excel-række {r} (\"{navn}\"): slutdato ({e.isoformat()}) ligger "
                                  f"før startdato ({s.isoformat()}).")
@@ -298,7 +420,27 @@ def laes_plan(sti, konfig=None):
         else:
             farve = fill if fill in NIVEAU else (MOEDE if er_moede else NEUTRAL)
             task = (vis, s, e, farve, False)
-        if not indrykket and fed:                       # fase-raekke
+        # Fed, indrykket raekke med dybere indrykkede raekker under sig er ogsaa en fase, hvis
+        # udtraekket indrykker hele hierarkiet (fx faser med 3 mellemrum, aktiviteter med 6).
+        # Fede aktiviteter under en fase (dybere indrykket, uden underraekker) forbliver aktiviteter.
+        indrykning = _indrykning(raw)
+        fase_indrykket = indrykket and fed and _har_underraekker(ws, r, kol["navn"], indrykning)
+        if not indrykket and fed:
+            nr = _naeste_navneraekke(ws, r, kol["navn"])
+            if nr is not None and _er_indrykket_fase(ws, nr, kol["navn"]):
+                # Samlelinje over faserne (fx projektets sumraekke) - kun selve faserne tegnes.
+                advarsler.append(f"Excel-række {r} (\"{navn}\"): samlelinje over faserne er udeladt.")
+                continue
+            fase_indrykning = 0
+        elif fase_indrykket:
+            fase_indrykning = indrykning
+        elif indrykket and fed and cur is not None and "summary" in cur and indrykning <= fase_indrykning:
+            # Fritstaaende raekke paa fase-niveau uden underraekker (fx en slutmilepael efter
+            # sidste fase) er ikke en fase og kan ikke hoere under den forrige - udeladt.
+            advarsler.append(f"Excel-række {r} (\"{navn}\"): står på fase-niveau uden aktiviteter "
+                             "under sig og er ikke en fase - udeladt.")
+            continue
+        if (not indrykket and fed) or fase_indrykket:   # fase-raekke
             cur = dict(key=navn, name=konfig.fase_navne.get(navn, navn), s=s, e=e, tasks=[], summary=task)
             lanes.append(cur)
         elif indrykket:

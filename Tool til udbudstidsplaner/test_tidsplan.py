@@ -12,7 +12,7 @@ import io
 import unittest
 from pathlib import Path
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.styles.colors import Color
 
@@ -45,6 +45,57 @@ def _workbook(rows):
     wb.save(buf)
     buf.seek(0)
     return buf
+
+
+def _workbook_layout(kolonner, rows, header_row=2, titel=None, gentag_foer=None):
+    """Som _workbook(), men med fri overskriftsraekke og kolonnerakkefoelge.
+    kolonner: liste af (overskriftstekst, felt) i kolonnerakkefoelge fra kolonne A,
+    hvor felt er en af id/navn/varighed/start/slut/pred. titel: tekst i A1.
+    gentag_foer: indeks i rows, hvor overskriftsraekken gentages (sideskift)."""
+    wb = Workbook()
+    ws = wb.active
+    if titel:
+        ws.cell(1, 1, titel)
+
+    def skriv_overskrift(r):
+        for c, (tekst, _) in enumerate(kolonner, start=1):
+            ws.cell(r, c, tekst)
+
+    skriv_overskrift(header_row)
+    r = header_row + 1
+    for i, row in enumerate(rows):
+        if gentag_foer == i:
+            skriv_overskrift(r)
+            r += 1
+        for c, (_, felt) in enumerate(kolonner, start=1):
+            if felt == "navn":
+                cell = ws.cell(r, c, ("  " + row["navn"]) if row.get("indrykket") else row["navn"])
+                if row.get("fed"):
+                    cell.font = Font(bold=True)
+            elif felt == "id":
+                ws.cell(r, c, i + 1)
+            elif felt == "pred":
+                ws.cell(r, c, "")
+            else:
+                ws.cell(r, c, row.get(felt, "5 days" if felt == "varighed" else ""))
+        r += 1
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def _msp_raekker():
+    """Fase + aktivitet + milepael med MS Project-datoer (ugedag foran)."""
+    return [
+        dict(navn="Fase 1", fed=True, varighed="4 days", start="Tue 10-11-26", slut="Fri 13-11-26"),
+        dict(navn="Aktivitet A", indrykket=True, varighed="3 days", start="Tue 10-11-26", slut="Thu 12-11-26"),
+        dict(navn="Milepæl: Aflevering", indrykket=True, varighed="0 days", start="Fri 13-11-26", slut="Fri 13-11-26"),
+    ]
+
+
+MSP_KOLONNER = [("ID", "id"), ("Task Name", "navn"), ("Duration", "varighed"),
+                ("Start", "start"), ("Finish", "slut"), ("Predecessors", "pred")]
 
 
 class TestParseDato(unittest.TestCase):
@@ -114,6 +165,53 @@ class TestParseVarighed(unittest.TestCase):
     def test_ugyldig_varighed_none(self):
         with self.assertRaises(ValueError):
             tp.parse_varighed(None)
+
+    def test_estimat_tegn(self):
+        self.assertEqual(tp.parse_varighed("5 days?"), 5)
+
+    def test_decimal_komma_rundes_op_til_1(self):
+        self.assertEqual(tp.parse_varighed("0,5 dage"), 1)
+
+    def test_decimal_punktum(self):
+        self.assertEqual(tp.parse_varighed("2.5 days"), 3)
+
+    def test_uger(self):
+        self.assertEqual(tp.parse_varighed("2 wks"), 10)
+        self.assertEqual(tp.parse_varighed("2 uger"), 10)
+        self.assertEqual(tp.parse_varighed("1 week"), 5)
+
+    def test_timer(self):
+        self.assertEqual(tp.parse_varighed("4 hrs"), 1)     # 0,5 dag -> mindst 1
+        self.assertEqual(tp.parse_varighed("16 timer"), 2)
+
+    def test_maaneder(self):
+        self.assertEqual(tp.parse_varighed("1 mon"), 20)
+        self.assertEqual(tp.parse_varighed("2 måneder"), 40)
+
+    def test_minutter(self):
+        self.assertEqual(tp.parse_varighed("480 mins"), 1)
+        self.assertEqual(tp.parse_varighed("960 min"), 2)
+
+    def test_elapsed_prefix_ignoreres(self):
+        self.assertEqual(tp.parse_varighed("10 edays"), 10)
+        self.assertEqual(tp.parse_varighed("2 ewks"), 10)
+
+    def test_ukendt_enhed_er_dage(self):
+        self.assertEqual(tp.parse_varighed("3 xyz"), 3)
+        self.assertEqual(tp.parse_varighed("3"), 3)
+
+    def test_nul_er_altid_0(self):
+        self.assertEqual(tp.parse_varighed("0 hrs"), 0)
+        self.assertEqual(tp.parse_varighed("0 days?"), 0)
+        self.assertEqual(tp.parse_varighed(0), 0)
+
+    def test_positiv_numerisk_bliver_aldrig_0(self):
+        self.assertEqual(tp.parse_varighed(0.4), 1)
+
+    def test_tekst_uden_tal_fejler(self):
+        for v in ("Duration", "ukendt", ""):
+            with self.subTest(v=v), self.assertRaises(ValueError):
+                tp.parse_varighed(v)
 
 
 class TestFarveSemantik(unittest.TestCase):
@@ -353,6 +451,144 @@ class TestLaesPlanOgByg(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             tp.laes_plan(_workbook(rows))
         self.assertIn("task name", str(ctx.exception).lower())
+
+
+class TestOverskriftsgenkendelse(unittest.TestCase):
+    """Automatisk fund af overskriftsraekken og opslag af kolonner efter navn."""
+
+    def _tjek_msp_plan(self, buf):
+        lanes, advarsler = tp.laes_plan(buf)
+        self.assertEqual(advarsler, [])
+        self.assertEqual(len(lanes), 1)
+        self.assertEqual(lanes[0]["name"], "Fase 1")
+        self.assertEqual([t[0] for t in lanes[0]["tasks"]], ["Aktivitet A", "Aflevering"])
+        self.assertEqual(lanes[0]["tasks"][0][1], dt.date(2026, 11, 10))
+        self.assertEqual(lanes[0]["tasks"][0][2], dt.date(2026, 11, 12))
+        return lanes
+
+    def test_overskrift_i_raekke_4_med_titel(self):
+        # Regression: "Ugyldig varighed: 'Duration'" naar overskriften ikke stod i raekke 2.
+        buf = _workbook_layout(MSP_KOLONNER, _msp_raekker(), header_row=4, titel="Udbud - tidsplan")
+        self._tjek_msp_plan(buf)
+
+    def test_overskrift_i_raekke_1(self):
+        self._tjek_msp_plan(_workbook_layout(MSP_KOLONNER, _msp_raekker(), header_row=1))
+
+    def test_anden_kolonnerakkefoelge(self):
+        kolonner = [("Start", "start"), ("Finish", "slut"), ("Task Name", "navn"),
+                    ("Duration", "varighed"), ("ID", "id")]
+        self._tjek_msp_plan(_workbook_layout(kolonner, _msp_raekker(), header_row=3))
+
+    def test_danske_overskrifter(self):
+        kolonner = [("Opgavenavn", "navn"), ("Varighed", "varighed"), ("Start", "start"), ("Slut", "slut")]
+        self._tjek_msp_plan(_workbook_layout(kolonner, _msp_raekker(), header_row=2))
+
+    def test_store_bogstaver_og_mellemrum_ligegyldige(self):
+        kolonner = [("  TASK NAME ", "navn"), ("duration", "varighed"),
+                    (" Start Date", "start"), ("FINISH DATE", "slut")]
+        self._tjek_msp_plan(_workbook_layout(kolonner, _msp_raekker(), header_row=2))
+
+    def test_gentaget_overskrift_springes_over(self):
+        buf = _workbook_layout(MSP_KOLONNER, _msp_raekker(), header_row=4, titel="Titel", gentag_foer=2)
+        lanes = self._tjek_msp_plan(buf)
+        self.assertEqual(len(lanes[0]["tasks"]), 2)
+
+    def test_find_overskrift_returnerer_raekke_og_kolonner(self):
+        buf = _workbook_layout(MSP_KOLONNER, _msp_raekker(), header_row=4, titel="Titel")
+        raekke, kol = tp.find_overskrift(load_workbook(buf).active)
+        self.assertEqual(raekke, 4)
+        self.assertEqual(kol, dict(navn=2, varighed=3, start=4, slut=5))
+
+    def test_find_overskrift_respekterer_maks(self):
+        buf = _workbook_layout(MSP_KOLONNER, _msp_raekker(), header_row=4)
+        self.assertIsNone(tp.find_overskrift(load_workbook(buf).active, maks=3))
+
+    def test_fejlbesked_angiver_faktisk_kolonne_og_raekke(self):
+        kolonner = [("ID", "id"), ("Task Name", "navn"), ("Predecessors", "pred"),
+                    ("Duration", "varighed"), ("Start", "start"), ("Finish", "slut")]
+        rows = _msp_raekker()
+        rows[1]["varighed"] = "ukendt"          # overskrift i raekke 4 -> fase 5, aktivitet A 6
+        with self.assertRaises(ValueError) as ctx:
+            tp.laes_plan(_workbook_layout(kolonner, rows, header_row=4, titel="Titel"))
+        besked = str(ctx.exception)
+        self.assertIn("kolonne D (Duration)", besked)
+        self.assertIn("række 6", besked)
+
+    def test_fejlbesked_start_og_finish_kolonner(self):
+        rows = _msp_raekker()
+        rows[0]["start"] = "ikke en dato"
+        with self.assertRaises(ValueError) as ctx:
+            tp.laes_plan(_workbook_layout(MSP_KOLONNER, rows, header_row=4))
+        self.assertIn("kolonne D (Start)", str(ctx.exception))
+        rows = _msp_raekker()
+        rows[0]["slut"] = ""
+        with self.assertRaises(ValueError) as ctx:
+            tp.laes_plan(_workbook_layout(MSP_KOLONNER, rows, header_row=4))
+        self.assertIn("kolonne E (Finish)", str(ctx.exception))
+
+    def test_manglende_task_name_angiver_kolonne(self):
+        rows = _msp_raekker()
+        rows[1]["navn"] = ""
+        with self.assertRaises(ValueError) as ctx:
+            tp.laes_plan(_workbook_layout(MSP_KOLONNER, rows, header_row=4))
+        self.assertIn("Task Name (kolonne B)", str(ctx.exception))
+
+    def test_indrykket_faseindeling_som_i_movia_udtraek(self):
+        # Hele hierarkiet er indrykket: faser (fed) med 3 mellemrum, aktiviteter med 6.
+        # En fed milepael under en fase (6) er en aktivitet. Samlelinjen over faserne (0) og en
+        # fritstaaende milepael paa fase-niveau uden aktiviteter (3) er ikke faser og udelades.
+        def raekke(navn, indrykning, fed=False, varighed="5 days", start="Tue 10-11-26", slut="Fri 13-11-26"):
+            return dict(navn=" " * indrykning + navn, fed=fed, varighed=varighed, start=start, slut=slut)
+        rows = [
+            raekke("Milepæl: Start", 0, fed=True, varighed="0 days"),
+            raekke("Fase A", 3, fed=True),
+            raekke("Aktivitet A1", 6),
+            raekke("Milepæl: Godkendt", 6, fed=True, varighed="0 days"),
+            raekke("Fase B", 3, fed=True),
+            raekke("Aktivitet B1", 6),
+            raekke("Aktivitet B2", 6, fed=True),
+            raekke("Milepæl: Slut", 3, fed=True, varighed="0 days"),
+        ]
+        lanes, advarsler = tp.laes_plan(_workbook_layout(MSP_KOLONNER, rows, header_row=4, titel="Titel"))
+        self.assertEqual([l["name"] for l in lanes], ["Fase A", "Fase B"])
+        self.assertEqual([len(l["tasks"]) for l in lanes], [2, 2])
+        self.assertEqual([t[0] for t in lanes[0]["tasks"]], ["Aktivitet A1", "Godkendt"])
+        self.assertEqual(len(advarsler), 2)   # udeladt samlelinje (række 5) og slutmilepael (række 12)
+        self.assertTrue(any("række 5" in a for a in advarsler))
+        self.assertTrue(any("række 12" in a for a in advarsler))
+
+    def test_overskrift_uden_finish_fejler(self):
+        kolonner = [("Task Name", "navn"), ("Duration", "varighed"), ("Start", "start")]
+        with self.assertRaises(ValueError) as ctx:
+            tp.laes_plan(_workbook_layout(kolonner, _msp_raekker(), header_row=3))
+        self.assertIn("Finish", str(ctx.exception))
+
+    def test_overskrift_uden_start_fejler(self):
+        kolonner = [("Task Name", "navn"), ("Duration", "varighed"), ("Finish", "slut")]
+        with self.assertRaises(ValueError) as ctx:
+            tp.laes_plan(_workbook_layout(kolonner, _msp_raekker(), header_row=3))
+        self.assertIn("Start", str(ctx.exception))
+
+    def test_uden_overskrift_bruges_kolonne_b_e_med_advarsel(self):
+        wb = Workbook()
+        ws = wb.active
+        ws.cell(2, 2, "Noget helt andet"); ws.cell(2, 3, "x"); ws.cell(2, 4, "y"); ws.cell(2, 5, "z")
+        c = ws.cell(3, 2, "Fase 1"); c.font = Font(bold=True)
+        ws.cell(3, 3, "4 days"); ws.cell(3, 4, "Tue 10-11-26"); ws.cell(3, 5, "Fri 13-11-26")
+        buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+        lanes, advarsler = tp.laes_plan(buf)
+        self.assertEqual(len(lanes), 1)
+        self.assertEqual(lanes[0]["tasks"][0][1], dt.date(2026, 11, 10))
+        self.assertTrue(any("Overskriftsrække" in a for a in advarsler))
+
+    def test_uden_overskrift_og_uden_kolonne_b_e_fejler(self):
+        wb = Workbook()
+        ws = wb.active
+        ws.cell(1, 1, "kun"); ws.cell(1, 2, "to kolonner")
+        buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+        with self.assertRaises(ValueError) as ctx:
+            tp.laes_plan(buf)
+        self.assertIn("B-E", str(ctx.exception))
 
 
 class TestReferenceFil(unittest.TestCase):

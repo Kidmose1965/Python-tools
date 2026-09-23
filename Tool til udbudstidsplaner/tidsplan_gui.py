@@ -149,6 +149,9 @@ class App:
         Button(række, text="Gem som ...", command=self.gem_config,
               bg=WHITE, fg=OXFORD, relief="solid", borderwidth=1,
               font=("Segoe UI", 9), cursor="hand2", padx=10).pack(side=LEFT, padx=(8, 0))
+        Button(række, text="Vis indhold ...", command=self.vis_konfig_indhold,
+              bg=WHITE, fg=OXFORD, relief="solid", borderwidth=1,
+              font=("Segoe UI", 9), cursor="hand2", padx=10).pack(side=LEFT, padx=(8, 0))
         Label(parent, text=f"Gemte konfigurationer ligger i: {KONFIG_MAPPE}", bg=WHITE, fg=GRAA,
               font=("Segoe UI", 8), anchor="w").pack(fill=X, padx=20, pady=(3, 0))
 
@@ -209,6 +212,38 @@ class App:
         self.udbud_var.set(konfig.udbud)
         return konfig
 
+    def _konfig_beskrivelse(self, konfig):
+        """Menneskelæsbar oversigt over hvad en konfiguration faktisk ændrer."""
+        dele = []
+        if konfig.kunde or konfig.udbud:
+            dele.append(f"Kunde: {konfig.kunde or '(ingen)'}\nUdbud: {konfig.udbud or '(ingen)'}")
+        if konfig.fase_navne:
+            linjer = "\n".join(f"  \"{fra}\" -> \"{til}\"" for fra, til in konfig.fase_navne.items())
+            dele.append(f"Faseomdøbninger ({len(konfig.fase_navne)}):\n{linjer}")
+        if konfig.korte_navne:
+            linjer = "\n".join(f"  \"{fra}\" -> \"{til}\"" for fra, til in konfig.korte_navne.items())
+            dele.append(f"Forkortede aktivitetsnavne ({len(konfig.korte_navne)}):\n{linjer}")
+        if konfig.ekstra_milepaele:
+            linjer = "\n".join(
+                f"  {dato.isoformat()} - {navn} (fase: {fase}){'  [blå officiel]' if blaa else '  [grå]'}"
+                for fase, navn, dato, blaa in konfig.ekstra_milepaele)
+            dele.append(f"Ekstra milepæle ({len(konfig.ekstra_milepaele)}):\n{linjer}")
+        if konfig.ikke_i_belastning:
+            linjer = "\n".join(f"  {navn}" for navn in sorted(konfig.ikke_i_belastning))
+            dele.append(f"Undtaget fra belastningsbånd ({len(konfig.ikke_i_belastning)}):\n{linjer}")
+        if not dele:
+            return "Denne konfiguration er tom - den ændrer ikke noget i forhold til en generisk tidsplan."
+        return "\n\n".join(dele)
+
+    def vis_konfig_indhold(self):
+        navn = self.config_navn_var.get()
+        if navn == INGEN_KONFIG:
+            messagebox.showinfo("Ingen konfiguration valgt",
+                                "Der er ikke valgt en konfiguration - tidsplanen tegnes generisk "
+                                "direkte fra Excel-filens egne navne og datoer.")
+            return
+        messagebox.showinfo(f"Konfiguration: {navn}", self._konfig_beskrivelse(self._avanceret))
+
     def _on_konfig_valgt(self, event=None):
         navn = self.config_navn_var.get()
         if navn == INGEN_KONFIG:
@@ -220,6 +255,7 @@ class App:
         sti = self._config_stier.get(navn)
         if sti is not None and self._indlæs_konfig(sti) is not None:
             self.sæt_status(f"Konfiguration valgt: {navn}")
+            messagebox.showinfo(f"Konfiguration: {navn}", self._konfig_beskrivelse(self._avanceret))
 
     def vælg_config(self):
         sti = filedialog.askopenfilename(
@@ -231,6 +267,7 @@ class App:
             return
         self._tilføj_til_liste(Path(sti).stem, sti)
         self.sæt_status(f"Konfiguration indlæst: {Path(sti).name}")
+        messagebox.showinfo(f"Konfiguration: {Path(sti).stem}", self._konfig_beskrivelse(self._avanceret))
 
     def gem_config(self):
         nuværende = self.config_navn_var.get()

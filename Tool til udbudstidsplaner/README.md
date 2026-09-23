@@ -31,6 +31,14 @@ udtrækket er den eneste vej ind i værktøjet.
   ikke være udfyldt.
 - Faser/summary tasks: fed skrift, ikke indrykket navn.
 - Aktiviteter under en fase: indrykket (mellemrum/tab foran navnet).
+- Udtræk hvor hele hierarkiet er indrykket (fx faser med 3 mellemrum og
+  aktiviteter med 6): en fed række er også en fase, hvis næste række er
+  indrykket dybere, eller hvis den står på samme niveau som den aktuelle fase
+  (fx en milepæl mellem to faser). Fede aktiviteter uden underrækker under en
+  fase forbliver aktiviteter.
+- Overskriftsrækken (Task Name/Duration/Start/Finish) findes automatisk i de
+  første 20 rækker, så titel-/tomme rækker foran og en anden kolonnerækkefølge
+  er ok (danske overskrifter som Opgavenavn/Varighed/Slut accepteres også).
 - Cellefarven i Task Name-kolonnen (kolonne B) er semantisk - se nedenfor.
 
 ## Farveskema (cellefarve i Task Name-kolonnen)
