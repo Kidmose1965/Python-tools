@@ -70,6 +70,7 @@ class Blueprint:
     aktiviteter: list[Aktivitet] = field(default_factory=list)
     retsvirkninger: list[Retsvirkning] = field(default_factory=list)
     henvisninger: list[Henvisning] = field(default_factory=list)
+    advarsler: list[tuple[str, str, str]] = field(default_factory=list)  # (begreb, kilde, citat)
 
     def milepael(self, mid: str) -> Milepael | None:
         return next((m for m in self.milepaele if m.id == mid), None)

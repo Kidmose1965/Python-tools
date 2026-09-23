@@ -14,6 +14,7 @@ FANER = {
     "Aktiviteter": ["Bane", "Tekst", "Fra", "Til", "Farvekategori", "Række"],
     "Retsvirkninger": ["Milepæl", "Type", "Detalje", "Hjemmel", "Citat", "Oprindelse"],
     "Henvisninger": ["Fra", "Til dokument", "Til punkt", "Fundet"],
+    "Advarsler": ["Begreb fra anden kontraktform", "Hvor", "Tekst"],
 }
 
 
@@ -48,6 +49,9 @@ def skriv(bp: Blueprint, sti: str | Path) -> Path:
     for h in bp.henvisninger:
         ws.append([str(h.fra), h.til_dokument, h.til_punkt,
                    {True: "ja", False: "NEJ", None: "dokument mangler"}[h.fundet]])
+    ws = wb["Advarsler"]
+    for a in getattr(bp, "advarsler", []):
+        ws.append(list(a))
     for ws in wb.worksheets:
         for kol in ws.columns:
             ws.column_dimensions[kol[0].column_letter].width = min(

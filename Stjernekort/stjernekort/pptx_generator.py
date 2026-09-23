@@ -103,7 +103,7 @@ def _titel(kunde: str, udbud: str) -> str:
 
 
 def generer(bp: Blueprint, template: str | Path, ud: str | Path, konfig: dict = TEMPLATE_KONFIG,
-            vis_typer: tuple[str, ...] = ("kontraktindgåelse", "faseafslutning", "prøve", "ophør"),
+            vis_typer: tuple[str, ...] = ("kontraktindgåelse", "faseafslutning", "milepæl", "prøve", "ophør"),
             kunde: str = "", udbud: str = ""):
     """Tegner blueprintet. Frister vises kun, hvis "frist" er med i vis_typer.
     Angives kunde og/eller udbud, saettes de i dias-titlen; ellers bruges templatens egen titel."""

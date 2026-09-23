@@ -7,7 +7,7 @@ from stjernekort.udtraek import laes_ordbog, udtraek
 
 ROD = Path(__file__).resolve().parents[1]
 DOCS = ROD / "testdata" / "esdh"
-ORDBOG = laes_ordbog(ROD / "stjernekort" / "ordbog_esdh.json")
+ORDBOG = laes_ordbog(ROD / "stjernekort" / "ordboeger" / "ordbog_udbud_esdh.xlsx")
 
 
 @lru_cache(maxsize=1)

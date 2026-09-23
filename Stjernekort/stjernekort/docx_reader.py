@@ -17,6 +17,7 @@ from docx.text.paragraph import Paragraph
 
 HEADING_RE = re.compile(r"^Heading (\d)$")
 BILAG_ID_RE = re.compile(r"Bilag[_ ]0*(\d+[A-Z]?)", re.IGNORECASE)
+APPENDIKS_RE = re.compile(r"Appendiks[_ ]([A-Z])\b")
 
 
 @dataclass
@@ -31,10 +32,15 @@ class Blok:
     forside: bool = False    # True før første Heading 1
 
 
-def dokument_id(filnavn: str) -> str:
-    """'11._Bilag_02_Hovedtidsplan.docx' -> 'Bilag 2'; kontrakten -> 'Kontrakt'."""
+def dokument_id(filnavn: str) -> str | None:
+    """'11._Bilag_02_Hovedtidsplan.docx' -> 'Bilag 2';
+    '12. Bilag 03A_..._Appendiks D_...' -> 'Bilag 3A, Appendiks D';
+    kontrakten -> 'Kontrakt'; øvrige (erklæringer mv.) -> None."""
     m = BILAG_ID_RE.search(filnavn)
-    return f"Bilag {m.group(1).upper()}" if m else "Kontrakt"
+    if m:
+        a = APPENDIKS_RE.search(filnavn)
+        return f"Bilag {m.group(1).upper()}" + (f", Appendiks {a.group(1)}" if a else "")
+    return "Kontrakt" if "kontrakt" in filnavn.lower() else None
 
 
 def _blokke_i_body(d):
@@ -92,9 +98,15 @@ def laes_docx(sti: str | Path) -> list[Blok]:
 
 
 def laes_mappe(mappe: str | Path) -> dict[str, list[Blok]]:
-    """Alle .docx i mappen, nøgle = dokument-id ('Kontrakt', 'Bilag 2' ...)."""
-    return {dokument_id(p.name): laes_docx(p)
-            for p in sorted(Path(mappe).glob("*.docx")) if not p.name.startswith("~$")}
+    """Kontrakt og bilag i mappen, nøgle = dokument-id ('Kontrakt', 'Bilag 2' ...).
+    Filer, der hverken er kontrakt eller bilag (erklæringer mv.), springes over."""
+    res = {}
+    for p in sorted(Path(mappe).glob("*.docx")):
+        did = dokument_id(p.name)
+        if p.name.startswith("~$") or did is None:
+            continue
+        res[did] = laes_docx(p)
+    return res
 
 
 def punkter(blokke: list[Blok]) -> dict[str, str]:
