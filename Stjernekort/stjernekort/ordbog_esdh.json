@@ -1,0 +1,162 @@
+{
+  "paradigme": "ESDH-system som en Service",
+  "milepaele": [
+    {
+      "id": "M1",
+      "navn": "Kontraktindgåelse",
+      "etiket": "Kontrakt-indgåelse",
+      "type": "kontraktindgåelse",
+      "synonymer": [
+        "kontraktindgåelse",
+        "kontraktunderskrivelse",
+        "underskrevet af både"
+      ]
+    },
+    {
+      "id": "M2",
+      "navn": "Godkendelse af afklaringsfasen",
+      "etiket": "Afklaringsfase godkendt",
+      "type": "faseafslutning",
+      "synonymer": [
+        "godkendelse af afklaringsfasen",
+        "afslutning af afklaringsfasen",
+        "afklaringsfasen afsluttes",
+        "revideret leverancebeskrivelse",
+        "godkendt ydelses- og servicebeskrivelse"
+      ]
+    },
+    {
+      "id": "M3",
+      "navn": "Brugertest",
+      "etiket": "Brugertest",
+      "type": "prøve",
+      "synonymer": [
+        "brugertest"
+      ]
+    },
+    {
+      "id": "M4",
+      "navn": "Prøvekonverteringer",
+      "etiket": "Prøve-konverteringer",
+      "type": "prøve",
+      "synonymer": [
+        "prøvekonvertering"
+      ]
+    },
+    {
+      "id": "F1",
+      "navn": "Brugerdokumentation godkendt",
+      "type": "frist",
+      "synonymer": [
+        "brugerdokumentation skal være godkendt"
+      ]
+    },
+    {
+      "id": "M5",
+      "navn": "Godkendelse af Ibrugtagningsprøven",
+      "etiket": "Ibrugtagnings-prøve godkendt",
+      "type": "prøve",
+      "synonymer": [
+        "ibrugtagningsprøve",
+        "ibrugtagningsdag"
+      ]
+    },
+    {
+      "id": "M6",
+      "navn": "Godkendelse af Driftsprøven",
+      "etiket": "Driftsprøve godkendt",
+      "type": "prøve",
+      "synonymer": [
+        "driftsprøve"
+      ]
+    },
+    {
+      "id": "F2",
+      "navn": "Exit-plan",
+      "type": "frist",
+      "synonymer": [
+        "exit-plan"
+      ]
+    },
+    {
+      "id": "F3",
+      "navn": "Tidligste opsigelse",
+      "type": "frist",
+      "synonymer": [
+        "tidligst til effekt"
+      ]
+    },
+    {
+      "id": "O1",
+      "navn": "Option: aflevering til Rigsarkivet",
+      "type": "frist",
+      "option": true,
+      "synonymer": [
+        "aflevering til rigsarkivet"
+      ]
+    },
+    {
+      "id": "M7",
+      "navn": "Kontraktophør",
+      "etiket": "Kontrakt-ophør",
+      "type": "ophør",
+      "synonymer": [
+        "kontraktophør",
+        "kontrakten løber i"
+      ]
+    }
+  ],
+  "retsvirkninger": {
+    "betaling": [
+      "forfalder til betaling",
+      "% af det samlede etableringsvederlag"
+    ],
+    "bod": [
+      "\\bbod\\b",
+      "\\bdagbod\\b"
+    ],
+    "ophævelse": [
+      "hæve kontrakten",
+      "berettiget til at hæve"
+    ],
+    "overtagelse": [
+      "overtaget af kunden"
+    ],
+    "ibrugtagning": [
+      "tages i fuld brug",
+      "ibrugtager kunden"
+    ],
+    "udtrædelsesadgang": [
+      "ret til at udtræde",
+      "udtræde af kontrakten"
+    ]
+  },
+  "tabeller": {
+    "bod": {
+      "overskrift_indeholder": [
+        "bodsudløsende"
+      ],
+      "type": "bod"
+    },
+    "betaling": {
+      "overskrift_indeholder": [
+        "milepæl",
+        "%"
+      ],
+      "type": "betaling"
+    },
+    "tidsplan": {
+      "overskrift_indeholder": [
+        "milepæle og vigtigste aktiviteter"
+      ],
+      "type": "tidsplan"
+    }
+  },
+  "forsinkelse": {
+    "indledning": "forsinkelse foreligger",
+    "retsvirkninger": [
+      "ophævelse"
+    ],
+    "note": "Milepælene i punktopstillingen efter indledningen får retsvirkningen ophævelse (forsinkelse over grænsen i punktet)."
+  }
+}
