@@ -55,9 +55,16 @@ def test_overtagelse_og_udtraedelse():
 
 
 def test_kendte_fejl_i_henvisninger():
-    brudte = {(str(h.fra), h.til_dokument, h.til_punkt) for h in _bp().henvisninger if h.fundet is False}
-    assert ("Bilag 5 pkt. 1", "Kontrakt", "24.2") in brudte      # skal være 23.2
-    assert ("Bilag 12 pkt. 5.3", "Bilag 5", "8.4") in brudte     # punkt 8.4 findes ikke
+    henv = {(str(h.fra), h.til_dokument, h.til_punkt): h.fundet for h in _bp().henvisninger}
+    brudte = {k for k, fundet in henv.items() if fundet is False}
+    assert ("Bilag 5 pkt. 2", "Kontrakt", "24.2") in brudte      # skal være 23.2
+    # Bilag 5 har et tomt "Heading 1"-afsnit allerførst i dokumentet (en
+    # efterladt titel-pladsholder), som Word selv tæller med i sin
+    # nummerering. "Bilag 12 pkt. 5.3"s henvisning til "bilag 5, punkt 8.4"
+    # er derfor KORREKT (matcher Words egen nummerering - punkt 8.4 er
+    # "Ydelser, der honoreres med særskilt vederlag") og skal IKKE stå som
+    # en kendt fejl.
+    assert henv[("Bilag 12 pkt. 5.3", "Bilag 5", "8.4")] is True
 
 
 def test_fremmed_begreb_fundet():

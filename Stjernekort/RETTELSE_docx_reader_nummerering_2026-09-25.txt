@@ -1,0 +1,90 @@
+RETTELSE: forkert afsnitsnummerering i docx_reader.py ved tomme overskrifter
+Dato: 2026-09-25
+
+================================================================
+PROBLEMET
+================================================================
+Under en samlet kvalitetssikring af DVR-materialet (testdata/dvr) viste
+Extractor_Avanceret (det uafhængige krydstjek.py-værktøj i C:\Python\src,
+som læser Words EGEN native afsnitsnummerering) at henvisningen "Bilag 12
+pkt. 5.3 -> bilag 5, punkt 8.4" er GYLDIG - stik imod Stjernekorts egen
+mekaniske udtræk, der havde den stående som en af to "kendte fejl" i
+tests/test_dvr.py.
+
+================================================================
+RODÅRSAG
+================================================================
+stjernekort/docx_reader.py sprang tomme afsnit over ("if not tekst:
+continue"), FØR den tjekkede om afsnittet var en overskrift. Bilag 5
+(Vedligeholdelse og support) har et tomt "Heading 1"-afsnit allerførst i
+dokumentet (en efterladt titel-pladsholder) - det blev derfor aldrig talt
+med i overskriftstælleren, og AL efterfølgende nummerering i dokumentet
+blev forskudt med 1 i forhold til hvad Word selv viser: Stjernekort
+beregnede "Vederlag" som kapitel 7, hvor det i virkeligheden (og ifølge
+Extractor_Avanceret, der læser Words rå numPr/nummerering) er kapitel 8.
+
+Bekræftet med to uafhængige metoder:
+  1. Extractor_Avanceret's egen nummereringsberegning (baseret på Words
+     numPr) er enig i forskydningen.
+  2. Bilag 12's henvisning "punkt 8.4" matcher PRÆCIST det rigtige indhold
+     ("Ydelser, der honoreres med særskilt vederlag") under den korrekte,
+     forskudte nummerering - og slet ikke noget meningsfuldt under
+     Stjernekorts oprindelige (fejlbehæftede) nummerering.
+
+================================================================
+FIXET
+================================================================
+stjernekort/docx_reader.py: overskriftstælleren (tael[]) opdateres nu FØR
+tom-tekst-tjekket, ikke efter. Et tomt overskriftsafsnit tæller dermed med
+i nummereringen (som Word gør), men genererer ingen Blok (da der ikke er
+nogen tekst at søge nøgleord i). Ændringen er lokal og ændrer ikke noget
+for dokumenter uden tomme overskrifter.
+
+================================================================
+OMFANG - 9 dokumenter havde en tom overskrift
+================================================================
+DVR: Bilag 5, Bilag 6, Bilag 3A (+ Appendiks B og D), Bilag 8,
+     Erklæring om konsortiedannelse
+ESDH: Bilag 3, Bilag 4, Erklæring om konsortiedannelse
+
+Kun to af de ni gav reelle, handlingskrævende konsekvenser efter fixet
+(resten havde enten ingen berørte henvisninger, eller pegede slet ikke ind
+i det forskudte talområde):
+
+--- DVR Bilag 5/Bilag 12 ---
+Den formodede fejl var IKKE en fejl i kontrakten, men en falsk positiv fra
+Stjernekorts nummereringsbug. tests/test_dvr.py::test_kendte_fejl_i_henvisninger
+er opdateret: "Bilag 5 pkt. 1" hedder nu "Bilag 5 pkt. 2" (kildepunktets
+egen nummerering rykkede også), og der er tilføjet en positiv bekræftelse
+af at "Bilag 12 pkt. 5.3 -> Bilag 5 pkt. 8.4" nu korrekt er gyldig.
+
+--- ESDH Bilag 4 (Afprøvning) - TO hidtil skjulte, ægte fejl i kontrakten ---
+Fixet afslørede to reelle citationsfejl, der hele tiden har været forkerte
+i det virkelige dokument, men som Stjernekorts nummereringsbug tilfældigvis
+gjorde usynlige (den forkerte nummerering "matchede" ved et tilfælde det
+forkerte, citerede tal):
+  1. "jf. punkt 2.1" -> rettet til "jf. punkt 3.1" ("Betinget godkendelse")
+  2. "punkt 4.3" -> rettet til "punkt 5.3" ("Rapportering" - Driftsprøvens
+     rapportering henviser korrekt til Ibrugtagningsprøvens regler for
+     rapportering, ikke til noget under "Brugertest")
+Begge rettet direkte i "13. Bilag 04_Afprøvning.docx".
+
+================================================================
+VERIFIKATION
+================================================================
+Fuld pytest-kørsel efter alle rettelser: 13/13 bestået (ESDH: 5, DVR: 6,
+generer_ordbog: 2).
+
+================================================================
+IKKE UNDERSØGT VIDERE (uden for denne opgaves scope)
+================================================================
+- De øvrige 7 dokumenter med tom overskrift er IKKE gennemgået for andre
+  interne selvhenvisninger end dem testsuiten allerede dækker - der kan i
+  princippet gemme sig tilsvarende, endnu ikke opdagede citationsfejl i
+  fx DVR Bilag 6 eller ESDH Bilag 3, hvis de har interne "jf. punkt X"-
+  henvisninger der ikke er del af de eksisterende tests.
+- DVR Bilag 5/6's øvrige nye "brudte" fund fra krydstjek.py (afsnit 3.2,
+  3.3, 5.1 i Bilag 6, samt Bilag 5 pkt. 4.2 -> 3.3) ser ud til at pege på
+  indhold der slet ikke er stylet som Word-overskrift (formentlig
+  tabelindhold/servicemål-lister) - en forudgående, uafhængig begrænsning
+  i begge værktøjer, ikke en konsekvens af dagens fix. Ikke rettet.
