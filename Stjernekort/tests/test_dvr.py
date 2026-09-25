@@ -54,17 +54,15 @@ def test_overtagelse_og_udtraedelse():
     assert rv[("M2", "udtrædelsesadgang")].kilde.punkt == "5.3.2"
 
 
-def test_kendte_fejl_i_henvisninger():
-    henv = {(str(h.fra), h.til_dokument, h.til_punkt): h.fundet for h in _bp().henvisninger}
-    brudte = {k for k, fundet in henv.items() if fundet is False}
-    assert ("Bilag 5 pkt. 2", "Kontrakt", "24.2") in brudte      # skal være 23.2
-    # Bilag 5 har et tomt "Heading 1"-afsnit allerførst i dokumentet (en
-    # efterladt titel-pladsholder), som Word selv tæller med i sin
-    # nummerering. "Bilag 12 pkt. 5.3"s henvisning til "bilag 5, punkt 8.4"
-    # er derfor KORREKT (matcher Words egen nummerering - punkt 8.4 er
-    # "Ydelser, der honoreres med særskilt vederlag") og skal IKKE stå som
-    # en kendt fejl.
-    assert henv[("Bilag 12 pkt. 5.3", "Bilag 5", "8.4")] is True
+def test_ingen_brudte_henvisninger():
+    """To tidligere kendte fejl er rettet ved kilden i det virkelige
+    materiale: Bilag 5 pkt. 1 citerer nu korrekt "Kontraktens punkt 23.2"
+    (var 24.2), og Bilag 12 citerer nu korrekt "bilag 5, punkt 7.4" (var
+    8.4 - Bilag 5 har et tomt "Heading 1"-afsnit allerførst i dokumentet,
+    som IKKE tælles med i Words egen nummerering, så "Vederlag" er kapitel
+    7, ikke 8). Ingen henvisninger skal derfor længere være brudte."""
+    brudte = [h for h in _bp().henvisninger if h.fundet is False]
+    assert brudte == []
 
 
 def test_fremmed_begreb_fundet():

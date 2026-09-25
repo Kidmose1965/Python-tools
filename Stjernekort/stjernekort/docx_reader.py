@@ -73,26 +73,17 @@ def laes_docx(sti: str | Path) -> list[Blok]:
     for b in _blokke_i_body(d):
         if isinstance(b, Paragraph):
             tekst = b.text.strip()
+            if not tekst:
+                continue
             m = HEADING_RE.match(b.style.name or "")
             if m and int(m.group(1)) <= 3:
-                # Overskriftstællingen skal ske FØR evt. "tom tekst"-tjek: Word
-                # tæller enhver overskriftsstil med i sin egen nummerering,
-                # uanset om afsnittet har tekst. Et tomt Heading 1-afsnit (fx en
-                # efterladt titel-pladsholder allerførst i dokumentet) skal
-                # derfor stadig rykke tælleren, ellers bliver al efterfølgende
-                # nummerering i dokumentet forskudt med 1 i forhold til hvad
-                # der faktisk står i det rigtige, åbnede Word-dokument.
                 niv = int(m.group(1)) - 1
                 tael[niv] += 1
                 for i in range(niv + 1, 3):
                     tael[i] = 0
                 punkt = ".".join(str(x) for x in tael[: niv + 1])
-                if not tekst:
-                    continue   # tom overskrift - tæller med i nummereringen, men giver ingen blok
                 overskrift, forside = tekst, False
                 blokke.append(Blok(dok, punkt, overskrift, "overskrift", tekst))
-            elif not tekst:
-                continue
             elif (b.style.name or "").lower().startswith("toc"):
                 continue
             else:
