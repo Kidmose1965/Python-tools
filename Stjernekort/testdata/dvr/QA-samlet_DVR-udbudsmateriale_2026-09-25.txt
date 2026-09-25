@@ -1,0 +1,143 @@
+SAMLET KVALITETSSIKRING - DVR-udbudsmateriale (Movia / Lægemiddelstyrelsen,
+RMC2025N00357)
+Dato: 2026-09-25
+Grundlag: testdata/dvr (28 dokumenter: Kontrakt + bilag 01-17 samt
+erklæringer, heraf 27 .docx og 1 .pdf) + stjernekort/ordboeger/
+ordbog_udbud_dvr.xlsx + det uafhængige Extractor_Avanceret-værktøj
+(src/krydstjek.py) fra C:\Python\src.
+
+OBS: Mekaniske/strukturerede tjek, ikke en juridisk kvalitetssikring. Dette
+sæt indeholder INGEN Udbudsbetingelser (kun Kontrakt + bilag), så der er
+intet tildelingskriterie-afsnit at lave dækningstjek mod, i modsætning til
+ESDH-materialet.
+
+================================================================
+DEL 1: STJERNEKORT - MEKANISK UDTRÆK
+================================================================
+pytest: 6/6 bestået (tests/test_dvr.py).
+
+--- Milepæle (11) ---
+M1 kontraktindgåelse Kontraktindgåelse
+M2 faseafslutning    Afklaringsfasen godkendes
+U1 milepæl           POC gennemført
+U2 milepæl           Verificeringsvindue igangsættes
+U3 milepæl           Verificeringsvindue afsluttes med verifikationstest
+M3 prøve             Overtagelsesprøve godkendes
+F1 frist              Driftsprøve igangsættes
+M4 prøve             Driftsprøve godkendes
+F2 frist              Garantiperioden udløber
+F3 frist              Tidligste opsigelse
+M5 ophør             Kontraktophør
+Struktur ser komplet og sammenhængende ud.
+
+--- Brudte krydshenvisninger: 2 ud af 131 (uændret siden 2026-09-24) ---
+1. Bilag 5 pkt. 1 -> "Kontraktens punkt 24.2" - Kontrakten har intet punkt
+   24.2. Se DEL 2 nedenfor for uafhængig bekræftelse.
+2. Bilag 12 pkt. 5.3 -> "bilag 5, punkt 8.4" - se VIGTIGT FUND i DEL 2:
+   denne er sandsynligvis IKKE en reel fejl i kontrakten.
+
+--- Terminologi-advarsel: "brugertest" (5 forekomster) ---
+Uændret siden 2026-09-24: Bilag 1 pkt. 2.2, 2.3; Bilag 2 pkt. 1.3; Bilag 4
+pkt. 6; Bilag 14 pkt. 3.2. Hører til en anden kontraktforms vokabular end
+K02 - værd at få bekræftet om det er bevidst eller en skabelon-rest.
+
+================================================================
+DEL 2: UAFHÆNGIG KRYDSVALIDERING (Extractor_Avanceret / krydstjek.py)
+================================================================
+Kørt på hele det .docx-baserede dokumentsæt (25 filer - Appendiks E til
+Bilag 3A er en .pdf og indgår ikke, se note nedenfor) med det forbedrede
+krydstjek.py (liste-håndtering, bilagsidentifikation, mv. rettet 2026-09-25).
+
+--- Støj identificeret og frasorteret ---
+- "§39" optræder ~140 gange - IKKE en intern henvisning, men det
+  branchespecifikke udtryk "§39-forhandler/§39-vet-forhandler" (autoriserede
+  forhandlere af veterinære lægemidler efter lægemiddellovens § 39). En
+  kendt begrænsning i værktøjets mønstergenkendelse (bare "§ NUM" tolkes
+  altid som en potentiel intern sektionshenvisning).
+- "§ 43", "§ 42", "§ 45", "§ 46", "§ 51" i Bilag 3A Appendiks D - alle er
+  feltdefinitioner der refererer til en ekstern "receptbekendtgørelse",
+  ikke interne afsnit.
+- Lister af eksterne lovhenvisninger ("Udbudslovens § 135, § 136, nr. 4",
+  "ophavsretslovens § 36 og § 37") - værktøjets eksterne-lov-mønster fanger
+  kun FØRSTE paragraf i sådan en liste; resten faldt fejlagtigt igennem som
+  interne henvisninger. Samme underliggende begrænsning som "§ NUM"-støjen.
+- "jf. punkt 14.1 i udbudsbetingelserne" - gentages som fast boilerplate i
+  stort set alle bilag ("Nærværende bilag indgår i vurderingen af
+  underkriteriet [...], jf. punkt 14.1 i udbudsbetingelserne"). Korrekt
+  ekstern henvisning, men krydstjek.py's kernefunktion mangler den samme
+  "i udbudsbetingelserne"-undtagelse som intern_tjek.py allerede har -
+  optræder derfor fejlagtigt som "usikker"/"ugyldig" ca. 12 gange.
+  (Alle disse støj-kategorier er tool-begrænsninger i Extractor_Avanceret,
+  ikke fejl i selve DVR-materialet - foreslås rettet i en senere runde.)
+
+--- VIGTIGT FUND: én af de to "kendte fejl" er sandsynligvis IKKE en reel
+    kontraktfejl, men et nummereringsartefakt i Stjernekorts docx_reader.py ---
+krydstjek.py (som læser Words EGEN native afsnitsnummerering, ikke en
+selvberegnet tælling) rapporterer "bilag 5, punkt 8.4" som GYLDIGT - i
+modsætning til Stjernekort, der rapporterer det som brudt.
+
+Undersøgt og bekræftet med to uafhængige metoder:
+  - Bilag 5 (Vedligeholdelse og support) har et TOMT "Heading 1"-afsnit
+    allerførst i dokumentet (formentlig en efterladt titel-pladsholder).
+  - Stjernekorts docx_reader.py springer TOMME afsnit over FØR det tjekker
+    om de er en overskrift (kildekode: "if not tekst: continue" før
+    overskrifts-tælleren opdateres) - det tomme Heading 1-afsnit tælles
+    derfor ALDRIG med, hvorved al efterfølgende nummerering i dokumentet
+    bliver forskudt med 1: Stjernekort beregner "Vederlag" som kapitel 7,
+    hvor Word (og krydstjek.py, der læser Words egen nummerering direkte)
+    viser det som kapitel 8 - og dermed "Ydelser, der honoreres med
+    særskilt vederlag" som punkt 8.4, ikke 7.4.
+  - Bilag 12's henvisning "bilag 5, punkt 8.4" matcher PRÆCIST Words egen
+    nummerering (8.4 = "Ydelser, der honoreres med særskilt vederlag") -
+    som er nøjagtig den slags ydelse, betalingsplan-konteksten i Bilag 12
+    handler om. Semantisk og strukturelt korrekt.
+
+KONKLUSION: Denne ene "kendte fejl" (test_dvr.py's
+test_kendte_fejl_i_henvisninger) er formentlig en FALSK POSITIV fra
+Stjernekorts egen afsnitstælling, ikke en fejl i selve DVR-kontrakten.
+Anbefaling: ret Stjernekorts docx_reader.py til ikke at springe tomme
+Heading-afsnit over ved talberegningen (separat opgave, ikke udført her),
+og opdatér test_dvr.py's forventning til denne henvisning tilsvarende.
+
+--- Den anden kendte fejl er bekræftet ægte ---
+"Bilag 5 pkt. 1 -> Kontraktens punkt 24.2" er cross-valideret som en reel
+fejl: BÅDE Stjernekorts og krydstjek.py's uafhængige nummerering er enige
+om at Kontrakten ikke har noget punkt 24.2 (punkt 23.2 = "Rettigheder til
+Leverandørspecifikt Programmel..." - det indhold, teksten faktisk
+beskriver; punkt 24 handler om noget andet, "Persondata"). Kontrakten har
+ingen tom Heading 1, så nummereringsdrift-problemet ovenfor er ikke i
+spil her.
+
+--- Eksterne lovhenvisninger fundet (til evt. juridisk stikprøve - IKKE
+    tjekket indholdsmæssigt her) ---
+Udbudslovens § 135, § 135 stk. 2, § 137 stk. 1 nr. 2, § 138, § 144 stk. 2,
+§ 144 stk. 3, § 185 stk. 1, § 185 stk. 2 (Kontrakten, Bilag 10,
+støtteerklæring); ophavsretslovens § 36 og § 37 (Kontrakten);
+lægemiddellovens § 39 stk. 1 (Bilag 3A m. appendiks); receptbekendtgørelsens
+§ 43 og § 44 (Bilag 3A Appendiks D); Databeskyttelsesforordningens/
+forordningens artikel 24, 28, 32, 33, 46, 79 (Bilag 8, Databehandleraftale).
+
+--- Bilag 3A, Appendiks E (PDF) ---
+Kravspecifikationen henviser til "bilag 3A, Appendiks E" (Referencearkitektur
+for Indlæsning af Stamdata). Filen findes rent faktisk på disk
+("13. Bilag 03A_..._Appendiks E_....pdf"), men er en PDF, ikke en .docx -
+hverken Stjernekort eller Extractor_Avanceret kan strukturelt læse/verificere
+indholdet af PDF-filer. Henvisningen kan derfor ikke bekræftes automatisk,
+men er ikke en reel "manglende fil"-fejl - den ligger der bare i et andet
+format end værktøjerne understøtter.
+
+================================================================
+SAMLET KONKLUSION
+================================================================
+- Milepæle og retsvirkninger: ser komplette og sammenhængende ud.
+- Kun ÉN reelt bekræftet brudt henvisning tilbage: "Kontraktens punkt 24.2"
+  i Bilag 5 pkt. 1 (bør være 23.2) - cross-valideret af to uafhængige
+  værktøjer.
+- Den anden tidligere antagede fejl (Bilag 12 -> Bilag 5 pkt. 8.4) er
+  sandsynligvis IKKE en fejl i kontrakten, men en falsk positiv fra
+  Stjernekorts egen nummerberegning - kræver ingen rettelse af DVR-
+  materialet, men Stjernekorts test-facit bør opdateres.
+- "brugertest"-terminologien (5 steder) og listen af eksterne
+  lovhenvisninger står som åbne punkter til manuel/juridisk vurdering.
+- Bilag 3A, Appendiks E kan ikke automatisk verificeres (PDF-format).
+- Ingen ændringer er lavet i selve DVR-dokumenterne under denne gennemgang.

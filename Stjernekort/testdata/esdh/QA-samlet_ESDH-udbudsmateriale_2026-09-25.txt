@@ -1,0 +1,184 @@
+SAMLET KVALITETSSIKRING - ESDH-udbudsmateriale (Movia)
+Dato: 2026-09-25
+Grundlag: testdata/esdh (27 dokumenter, inkl. Udbudsbetingelser, Kontrakt +
+alle bilag) + stjernekort/ordboeger/ordbog_udbud_esdh.xlsx
+Dette notat konsoliderer og erstatter de to tidligere separate notater fra
+2026-09-24 (det generelle QA-notat og pkt.14-vs-kravspec-notatet).
+
+OBS - LÆS FØRST: Dette er MEKANISKE og strukturerede tjek (regex/nøgleords-
+baseret via en ordbog, samt manuelle krydstjek af konkrete punkt-henvisninger
+lavet på Claudes foranledning). Det er IKKE en juridisk eller udbudsretlig
+kvalitetssikring. Det dækker: krydshenvisninger, fremmed kontraktforms-
+terminologi, milepæl/retsvirkningsoversigt, og en dybdegående gennemgang af
+tildelingskriteriets (pkt. 14) henvisninger til Kravspecifikationen og
+Kontrakten. Det dækker IKKE mindstekrav, øvrig indholdsmæssig kvalitet,
+tidsplanens realisme, eller kommercielle vilkår i bredere forstand.
+
+================================================================
+DEL 1: GENEREL MEKANISK GENNEMGANG (hele materialet)
+================================================================
+
+--- Milepæle (11 fundet) ---
+M1  kontraktindgåelse   Kontraktindgåelse                        - 0 retsvirkninger
+M2  faseafslutning      Godkendelse af afklaringsfasen            - 2 (udtrædelsesadgang, betaling)
+M3  prøve               Brugertest                                - 0 retsvirkninger
+M4  prøve               Prøvekonverteringer                       - 0 retsvirkninger
+F1  frist                Brugerdokumentation godkendt              - 0 retsvirkninger
+M5  prøve               Godkendelse af Ibrugtagningsprøven        - 6 (ibrugtagning, overtagelse, ophævelse, bod, ibrugtagning, betaling)
+M6  prøve               Godkendelse af Driftsprøven               - 3 (ophævelse, bod, betaling)
+F2  frist                Exit-plan                                 - 0 retsvirkninger
+F3  frist                Tidligste opsigelse                       - 0 retsvirkninger
+O1  frist                Option: aflevering til Rigsarkivet         - 0 retsvirkninger
+M7  ophør               Kontraktophør                             - 0 retsvirkninger
+
+Vurdering: strukturen ser komplet og sammenhængende ud. M3 (Brugertest) og
+M4 (Prøvekonverteringer) har ingen koblede retsvirkninger i udtrækket -
+BEKRÆFTET TILSIGTET af Birger (2026-09-25): disse prøver er ikke direkte
+bod-/betalingsudløsende. Ikke en fejl.
+
+--- Brudte krydshenvisninger: 0 ud af 44 ---
+Alle interne henvisninger (Kontrakt <-> bilag) løser korrekt op.
+(Historik: der var 1 brudt henvisning ved første tjek 2026-09-23, pga.
+stavefejlen "Kontaktens" i Bilag 09 pkt. 4 - rettet samme dag til
+"Kontraktens", hvorefter alle henvisninger løste korrekt op.)
+
+--- Terminologi-advarsel (fremmede kontraktforms-begreber): 0 fund ---
+Ordbogen tjekker specifikt for "overtagelsesprøve"/"overtagelsesdag" (K02-
+kontraktformens sprog for det, denne Service-kontrakt kalder "Brugertest"/
+"Ibrugtagningsprøve"). Ingen forekomster fundet - konsistent egen
+terminologi.
+
+================================================================
+DEL 2: DYBDEGÅENDE TJEK AF PKT. 14 (VURDERING AF TILBUD)
+================================================================
+Udbudsbetingelsernes pkt. 14 indgår ikke i standard-udtrækket ovenfor (det
+er ikke et "bilag" i teknisk forstand), så det er tjekket separat, manuelt.
+
+--- 14.1, underkriterium "Kvalitet": 28 bullets -> 29 afsnitshenvisninger
+    til Kravspecifikationen (Bilag 1A) ---
+STATUS: FULDT KORREKT (efter rettelser - se historik nedenfor).
+Alle 29 afsnit i Kravspecifikationens kapitel 4, 5 og 6 citeres nu præcis
+ÉN gang hver i pkt. 14.1 - ingen huller, ingen dubletter, alle
+beskrivelsesteksters indhold matcher nu de afsnit, de citerer.
+
+Historik (rettet 2026-09-24, direkte i "01. Udbudsbetingelser.docx"):
+  1. Kravspecifikationens afsnit 5.10 ("Publicering First Agenda") var
+     formentlig indsat i Kravspecifikationen EFTER pkt. 14 blev skrevet,
+     hvilket havde forskudt to henvisninger: teksten om "hændelseslogning"
+     (reelt afsnit 5.11) citerede fejlagtigt "5.10", og teksten om "navne-
+     og adresseoplysninger" (reelt afsnit 5.12) manglede helt - afsnit 5.12
+     var slet ikke nævnt nogen steder i pkt. 14. Konsekvens før rettelse:
+     Kravspecifikationens afsnit 5.10 indgik slet ikke i evalueringen.
+     RETTET: teksten om "5.7, 5.8, 5.9, 5.10" nævner nu korrekt "publicering
+     af First Agenda" (5.10); en ny bullet citerer nu "5.11, 5.12 og 6.1"
+     og nævner alle tre emner (hændelseslogning, navne-/adresseoplysninger,
+     generelle non-funktionelle krav) i rækkefølge.
+  2. Delkriteriet for afsnit 6.2, 6.4, 6.5, 6.6, 6.7 nævnte hverken
+     "sikkerhed" (selvom 6.4 og 6.7 begge handler om sikkerhed) eller
+     havde en ren sætningsstruktur, og nævnte fejlagtigt "integrationer"
+     (som allerede har sit eget selvstændige delkriterium via afsnit 6.3).
+     RETTET: "integrationer og " fjernet, "krav til sikkerhed" tilføjet
+     eksplicit, og sætningen omstruktureret til korrekt "at ... at ...
+     samt ..."-opbygning.
+
+--- 14.1, underkriterierne "Metode og proces", "Pris", "Vedligeholdelse
+    og servicemål": bilag-niveau-henvisninger ---
+Tjekket: bilag 2, 3, 4, 7, 9 (Metode og proces), bilag 8 (Pris), bilag 5, 6
+(Vedligeholdelse og servicemål). Alle ni bilag-numre og deres parentes-
+titler ("Hovedtidsplan og detaljeret tidsplan", "Kundens ydelser",
+"Afprøvning", "Samarbejdsorganisation", "Ændringshåndtering", "Drift og
+vedligeholdelse", "Servicemål og bodsbestemmelser") matcher præcist de
+faktiske bilagsfiler. Ingen fund.
+
+--- 14.1, underkriterium "Kontraktlige vilkår": Kontraktens punkter ---
+Tjekket alle 9 citerede punkter i Kontrakten:
+  33.2  OK  Bod ved forsinkelse
+  34.2  OK  Afhjælpning
+  36    OK  Kundens forhold
+  37    OK  Opgørelse ved ophævelse
+  38    OK  Erstatningspligt og ansvarsfraskrivelser
+  39.1  OK  Brugsret       )
+  39.2  OK  Dokumentation  ) under punkt 39 "Rettigheder" - matcher
+  39.3  OK  Data           ) den citerede parentestitel "(Rettigheder)"
+  49    OK  Forhold ved ophør
+  + Databehandleraftalen (bilag 10) - findes, matcher.
+Alle punkter findes, og alle parentes-titler i pkt. 14.1 matcher de
+faktiske overskrifter i Kontrakten. Ingen fund.
+
+================================================================
+SAMLET KONKLUSION
+================================================================
+Efter de foretagne rettelser (stavefejlen i Bilag 09, og de to fejl i
+pkt. 14.1's henvisninger til Kravspecifikationen) fremstår ESDH-
+udbudsmaterialet RENT på alle de mekaniske og strukturerede tjek, der er
+lavet:
+  - 0 brudte interne krydshenvisninger (ud af 44)
+  - 0 fremmede-begreb-advarsler
+  - 29/29 korrekte afsnitshenvisninger fra tildelingskriteriet til
+    Kravspecifikationen
+  - Alle bilag- og kontraktpunkt-henvisninger i tildelingskriteriet
+    verificeret korrekte
+
+M3/M4 uden koblede retsvirkninger: BEKRÆFTET TILSIGTET af Birger (2026-09-25).
+
+================================================================
+DEL 3: UDVIDET GENNEMGANG (2026-09-25) - hidtil udækkede områder
+================================================================
+Udført efter en revideret, forbedret instruktionsramme for kontraktanalyse
+(se "kontraktanalyse_instruktioner_forbedret_2026-09-25.txt" i Stjernekort-
+mappen), scopet til det der IKKE allerede var dækket af Del 1-2 ovenfor.
+
+--- Bilag A (Tidsplan) ---
+Ingen krydshenvisninger overhovedet - indeholder kun en datotabel. Ingen
+fund.
+
+--- Bilag B (Opfyldelse af mindstekrav) ---
+Gentager samme Kontrakt-punkt-liste som pkt. 14.1 (33.2, 34.2, 36, 37, 38,
+39.1-39.3, 49 - allerede verificeret korrekte, se Del 2), samt bilag-
+niveau-henvisninger til Bilag 2, 4, 6, 8 - alle matcher de faktiske
+bilagstitler. Ingen fund.
+
+--- Resten af Udbudsbetingelser.docx (uden for pkt. 14) ---
+Systematisk regex-scan for "punkt X", "afsnit X", "bilag X" i alle øvrige
+punkter. Fund:
+
+  NY FEJL: Pkt. 15: "På baggrund af evalueringen, jf. afsnit 13, fastsætter
+  Movia en frist for den tilbudsgiver..." - men afsnit 13 hedder "Afgivelse
+  af endeligt tilbud", IKKE evalueringen. Evalueringen foregår i afsnit 14
+  ("Vurdering af tilbud"). "Jf. afsnit 13" er efter alt at dømme en fejl og
+  bør være "jf. afsnit 14". Strukturelt gyldigt tal (afsnit 13 findes),
+  semantisk forkert - samme mønster som 5.10/5.11-fundet i Del 2.
+  RETTET (2026-09-25, direkte i dokumentet): "jf. afsnit 13" ændret til
+  "jf. afsnit 14". Verificeret at dokumentet stadig læses korrekt
+  (312 blokke, uændret).
+
+  Øvrige tjekkede henvisninger (alle OK):
+  - Pkt. 13.1 "punkt 14.1" (sprogbrug i tilbud påvirker evaluering) -> korrekt.
+  - Pkt. 13.2 "punkt 13.4" (mindstekrav) -> korrekt, samme dokument.
+  - Pkt. 21 "punkt 10" (EU-sanktioner mod Rusland) -> punkt 10 hedder
+    netop "EU-sanktioner mod Rusland og russiske interesser" - korrekt.
+  - Pkt. 18.1: ingen reel henvisning (falsk regex-match, forkastet).
+
+--- Fuld semantisk gennemgang af alle 44 strukturelt gyldige
+    Kontrakt+bilag-krydshenvisninger ---
+Hver af de 44 allerede strukturelt validerede henvisninger (Del 1) er
+læst enkeltvis: citerende kontekst sammenholdt med den citerede sektions
+egen overskrift. To grænsetilfælde undersøgt med fuld tekst:
+  - Kontrakt pkt. 38 -> pkt. 34.3 ("Mangler ved Kundens data"): handler om
+    Leverandørens erstatningspligt ved tab/forvanskning af Kundens data -
+    pkt. 34.3 er netop definitionen af denne mangelstype. OK ved fuld læsning.
+  - Bilag 10 pkt. 17 -> Kontrakt pkt. 22 ("Krav til sikkerhed"): årlig
+    revisionserklæring om sikkerhedsforanstaltninger hos databehandleren -
+    hører naturligt under sikkerhedskravene, ikke under den generelle
+    Audit-bestemmelse (pkt. 23). OK ved fuld læsning.
+Ingen yderligere fejl fundet blandt de 44.
+
+================================================================
+SAMLET STATUS EFTER DEL 3
+================================================================
+Ingen åbne punkter. ESDH-udbudsmaterialet (inkl. Udbudsbetingelserne med
+Bilag A og B) fremstår nu rent på alle mekaniske og strukturerede tjek,
+der er lavet - alle fundne fejl er rettet direkte i dokumenterne. Husk
+fortsat at dette IKKE erstatter en indholdsmæssig/juridisk gennemgang af
+mindstekrav, tildelingskriteriernes proportionalitet, eller kontraktens
+kommercielle vilkår.
