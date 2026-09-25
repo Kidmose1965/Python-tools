@@ -57,19 +57,31 @@ SEKTIONSORD = r"(?:afsnit|punkt|pkt\.?|kapitel|sektion|klausul|§|underpunkt|del
 BILAGSORD = r"(?:underbilag|kontraktbilag|bilag|appendiks|appendix)"
 NUM = r"\d+(?:\.\d+)*"
 
+# Yderligere tal i en opremsning efter det første ("afsnit 4.1, 4.2 og 4.3",
+# "bilag 1A, punkt 5.7, 5.8, 5.9 og 5.10", "afsnit 4.6, 4.7, og 4.9" - bemærk
+# kombineret ", og" som skilletegn før sidste led) - fanges som ÉN streng og
+# pilles fra hinanden med NUM_RE.findall() bagefter. Uden dette blev kun det
+# FØRSTE tal i en opremsning nogensinde registreret som en henvisning -
+# resten forsvandt sporløst, uden selv at blive markeret ugyldig/usikker.
+LISTE_SEP = r"(?:,\s*og|,|og)"
+LISTE_HALE = rf"(?:\s*{LISTE_SEP}\s*{NUM})*"
+NUM_RE = re.compile(NUM)
+
 # Bilagsnummer i LØBENDE TEKST: kræver mellemrum efter ordet ("se Bilag 3").
 # Bogstav må kun klæbe DIREKTE til tallet (3A), ikke efter mellemrum (16 i = "16").
 BILAG_NR = r"(\d+[A-Za-z]?|[A-ZÆØÅ])"
 RE_BILAG_SEKTION = re.compile(
-    rf"\b({BILAGSORD})\s+{BILAG_NR}\b[,\s]+\s*({SEKTIONSORD})\s*({NUM})",
+    rf"\b({BILAGSORD})\s+{BILAG_NR}\b[,\s]+\s*({SEKTIONSORD})\s*({NUM})(?P<hale>{LISTE_HALE})",
     re.IGNORECASE)
 RE_SEKTION = re.compile(
     rf"(?:"
-    rf"(kontraktens|nærværende\s+(?:\w+\s+)?)\s*({SEKTIONSORD})\s*({NUM})(?:\s*[-–]\s*({NUM}))?"
+    rf"(?P<praefiks>kontraktens|nærværende\s+(?:\w+\s+)?)\s*(?P<ord_a>{SEKTIONSORD})\s*"
+    rf"(?P<nr1_a>{NUM})(?:\s*[-–]\s*(?P<nr2_a>{NUM}))?(?P<hale_a>{LISTE_HALE})"
     rf"|"
     # (?<!\w) i stedet for \b: \b matcher ikke foran et symbol som "§" (begge
     # sider ikke-ordtegn), så "§ 4.2" faldt hidtil helt igennem nettet.
-    rf"(?<!\w)({SEKTIONSORD})\s*({NUM})(?:\s*[-–]\s*({NUM}))?"
+    rf"(?<!\w)(?P<ord_b>{SEKTIONSORD})\s*"
+    rf"(?P<nr1_b>{NUM})(?:\s*[-–]\s*(?P<nr2_b>{NUM}))?(?P<hale_b>{LISTE_HALE})"
     rf")",
     re.IGNORECASE)
 RE_BILAG = re.compile(rf"\b({BILAGSORD})\s+{BILAG_NR}\b", re.IGNORECASE)
@@ -184,17 +196,37 @@ def kortlaeg(docs):
             if m and len(tekst) <= 150:          # ligner en overskrift
                 numre.add(norm_nr(m.group(1)))
             if tekst and len(tekst) <= 150:
-                mb = RE_BILAG_DEF.search(tekst)
+                mb = _bilag_match(tekst)
                 if mb and mb.start() <= 4:   # bilagsordet står forrest i overskriften
                     bilag.setdefault((_btype(mb.group(1)), norm_nr(mb.group(2))),
                                      f"{navn} (overskrift)")
         sektioner[navn] = numre
         # bilagsidentitet fra filnavnet, fx "xx. Bilag 03_Tidsplan.docx".
         # Filnavnet vægter højest: overskriv evt. overskrifts-gæt.
-        m = RE_BILAG_DEF.search(d.path.stem)
+        m = _bilag_match(d.path.stem)
         if m:
             bilag[(_btype(m.group(1)), norm_nr(m.group(2)))] = navn
     return sektioner, bilag
+
+
+def _bilag_match(tekst):
+    """Som RE_BILAG_DEF.search(), men foretrækker en APPENDIKS-forekomst
+    frem for en almindelig BILAG-forekomst, hvis begge findes i samme
+    tekst/filnavn.
+
+    Uden dette ville fx "07. Bilag 01A_Kravspecifikation_Appendiks B_
+    Metadatamodel.docx" blive identificeret som selve "Bilag 1A" (det
+    første match, "Bilag 01A", vinder ved en almindelig .search()) - og
+    dermed fejlagtigt overskrive/kollidere med den RIGTIGE "Bilag 1A"
+    (Kravspecifikationen selv). Filens egen identitet er jo appendikset,
+    ikke det bilag det hører under - to forskellige appendiks-filer til
+    samme bilag (fx "... Appendiks A ..." og "... Appendiks B ...") ville
+    ellers begge registrere sig som "Bilag 1A" og overskrive hinanden."""
+    fund = list(RE_BILAG_DEF.finditer(tekst))
+    for m in fund:
+        if _btype(m.group(1)) == "APPENDIKS":
+            return m
+    return fund[0] if fund else None
 
 
 def _btype(ord_):
@@ -348,7 +380,16 @@ def saetning(tekst, start, slut):
 
 def er_definition(tekst, m):
     """Spring selve definitionen over (overskriften 'Bilag 3 - Tidsplan'
-    eller '4.2 Betaling' er ikke en henvisning)."""
+    eller '4.2 Betaling' er ikke en henvisning) - MEN aldrig hvis matchet
+    starter med et referenceord som 'Kontraktens'/'nærværende ...'
+    (RE_SEKTIONs praefiks-gruppe, hvis den findes på det matchede objekt).
+    En overskrift fraser sig aldrig sådan, så det er utvetydigt en
+    henvisning - selvom den står alene i et kort afsnit, fx en
+    bullet-liste-linje som "Kontraktens punkt 33.2 (Bod ved forsinkelse)",
+    der ellers ramte samme "kort tekst der starter ved position 0"-mønster
+    som en rigtig overskrift og blev fejlagtigt sprunget over."""
+    if m.groupdict().get("praefiks"):
+        return False
     return m.start() == 0 and len(tekst) <= 150
 
 
@@ -438,28 +479,42 @@ def validér(docs, _bilag_override=None, _sektioner_override=None):
                              f"i stedet for et rigtigt bilagsnummer - mangler at "
                              f"blive udfyldt"))
 
-            # 1) kombineret: "Bilag 3, punkt 2.1"
+            # 1) kombineret: "Bilag 3, punkt 2.1" / "bilag 1A, afsnit 5.7, 5.8 og 5.9"
+            def tjek_bilag_sektion(btype, bnr, snr):
+                """Vurderer ét afsnitsnummer (snr) i et givet bilag (btype+bnr).
+                Udskilt til egen funktion så samme vurdering kan genbruges for
+                hvert ekstra tal i en opremsning, ikke kun det første."""
+                bstatus, sted = find_bilag(bilag_def, btype, bnr)
+                if bstatus == "ugyldig":
+                    return "ugyldig", f"{btype.title()} {bnr} findes ikke i samlingen"
+                if bstatus == "usikker":
+                    return "usikker", sted
+                if sted.endswith("(overskrift)"):
+                    return "stoej", (f"{btype.title()} {bnr} kun nævnt som "
+                                     f"overskrift i {sted.split(' (')[0]} - "
+                                     f"ikke eget dokument i samlingen")
+                if snr in sektioner.get(sted, set()):
+                    return "gyldig", f"afsnit {snr} findes i {sted}"
+                return "ugyldig", f"afsnit {snr} findes ikke i {sted}"
+
             for m in RE_BILAG_SEKTION.finditer(tekst):
                 if er_definition(tekst, m) or not er_bilagsnummer(m.group(2)):
                     continue
                 optaget.append((m.start(), m.end()))
                 btype, bnr = m.group(1), norm_nr(m.group(2))
                 snr = norm_nr(m.group(4))
-                bstatus, sted = find_bilag(bilag_def, btype, bnr)
-                if bstatus == "ugyldig":
-                    status, forkl = "ugyldig", f"{btype.title()} {bnr} findes ikke i samlingen"
-                elif bstatus == "usikker":
-                    status, forkl = "usikker", sted
-                else:
-                    if sted.endswith("(overskrift)") :
-                        status, forkl = "stoej", (f"{btype.title()} {bnr} kun nævnt som "
-                                                  f"overskrift i {sted.split(' (')[0]} - "
-                                                  f"ikke eget dokument i samlingen")
-                    elif snr in sektioner.get(sted, set()):
-                        status, forkl = "gyldig", f"afsnit {snr} findes i {sted}"
-                    else:
-                        status, forkl = "ugyldig", f"afsnit {snr} findes ikke i {sted}"
+                hale = m.group("hale") or ""
+                status, forkl = tjek_bilag_sektion(btype, bnr, snr)
                 fund.append((status, navn, m.group(0), saetning(tekst, m.start(), m.end()), forkl))
+                # Ekstra tal fra en opremsning ("bilag 1A, afsnit 5.7, 5.8 og
+                # 5.9") valideres hver for sig - se samme begrundelse ved
+                # sektionshenvisninger (punkt 3) nedenfor.
+                for ekstra_nr in NUM_RE.findall(hale):
+                    ekstra_nr = norm_nr(ekstra_nr)
+                    status_e, forkl_e = tjek_bilag_sektion(btype, bnr, ekstra_nr)
+                    fund.append((status_e, navn,
+                                f"{btype} {bnr}, {m.group(3)} {ekstra_nr} (fra opremsning: {m.group(0)})",
+                                saetning(tekst, m.start(), m.end()), forkl_e))
 
             # 2a) "bilag 3 og 4" – to bilag i ét udtryk
             for m in RE_BILAG_OG.finditer(tekst):
@@ -504,16 +559,17 @@ def validér(docs, _bilag_override=None, _sektioner_override=None):
                     forkl = f"{btype.title()} {bnr} findes ikke i dokumentsamlingen"
                 fund.append((status, navn, m.group(0), saetning(tekst, m.start(), m.end()), forkl))
 
-            # 3) sektionshenvisninger: "jf. afsnit 4.2" / "punkt 2.1-2.3"
+            # 3) sektionshenvisninger: "jf. afsnit 4.2" / "punkt 2.1-2.3" /
+            #    "afsnit 4.1, 4.2 og 4.3" (opremsning - se LISTE_HALE ovenfor)
             for m in RE_SEKTION.finditer(tekst):
                 if not ledig(m) or er_definition(tekst, m):
                     continue
                 optaget.append((m.start(), m.end()))
-                # RE_SEKTION har 7 grupper: g1 = præfiks-ord ("kontraktens"/
-                # "nærværende ..."), (g2,g3,g4) = præfiks-variant, (g5,g6,g7) = standard
-                praefiks = (m.group(1) or "").lower()
-                nr1 = m.group(3) or m.group(6)
-                nr2 = m.group(4) or m.group(7)
+                ord_ = m.group("ord_a") or m.group("ord_b")
+                praefiks = (m.group("praefiks") or "").lower()
+                nr1 = m.group("nr1_a") or m.group("nr1_b")
+                nr2 = m.group("nr2_a") or m.group("nr2_b")
+                hale = m.group("hale_a") or m.group("hale_b") or ""
                 if not nr1:
                     continue
                 tvunget_dok = None
@@ -531,6 +587,14 @@ def validér(docs, _bilag_override=None, _sektioner_override=None):
                         status1 = par[0]
                         forkl = f"{forkl}; {forkl2}"
                 fund.append((status1, navn, m.group(0), saetning(tekst, m.start(), m.end()), forkl))
+                # Ekstra tal fra en opremsning ("... 4.1, 4.2 og 4.3") valideres
+                # hver for sig og får sit eget fund-punkt - IKKE bare fusioneret
+                # ind i nr1/nr2's fund som ovenfor, da en liste kan være
+                # vilkårligt lang og hvert tal fortjener sin egen vurdering.
+                for ekstra_nr in NUM_RE.findall(hale):
+                    status_e, forkl_e = tjek_sektion(ekstra_nr, navn, tvunget_dok)
+                    fund.append((status_e, navn, f"{ord_} {ekstra_nr} (fra opremsning: {m.group(0)})",
+                                saetning(tekst, m.start(), m.end()), forkl_e))
 
     return fund, sektioner, bilag_def
 
@@ -731,6 +795,13 @@ def main():
         "--semantik", action="store_true",
         help="Kør semantisk AI-analyse af ugyldige/usikre henvisninger")
     ap.add_argument(
+        "--semantik-alle", action="store_true",
+        help="Sammen med --semantik: kør ogsaa semantisk analyse af GYLDIGE "
+             "henvisninger, ikke kun ugyldige/usikre. Fanger fejl hvor et "
+             "citeret afsnitsnummer rent faktisk findes, men er det forkerte "
+             "(fx forskudt i en opremsning) - langsommere/dyrere da alle "
+             "henvisninger AI-analyseres, ikke kun de mistaenkelige.")
+    ap.add_argument(
         "--kontekst", nargs="+", metavar="FIL_ELLER_MAPPE",
         help="Filer og/eller mapper der KUN bruges til opslag af afsnits- og "
              "bilagsnumre (fx udbudsbetingelserne) - bruges ikke til at finde "
@@ -768,7 +839,8 @@ def main():
             dok_indhold = byg_dokument_indhold(samlinger)
             for d in kontekst_docs:
                 dok_indhold[d.path.name] = _dok_tekst(d)
-            semantik_resultater = semantik.analysér_batch(fund, dok_indhold)
+            semantik_resultater = semantik.analysér_batch(
+                fund, dok_indhold, alle=args.semantik_alle)
         except ImportError:
             print("ADVARSEL: semantik.py ikke fundet — springer over")
         except Exception as e:

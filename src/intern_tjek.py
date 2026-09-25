@@ -157,16 +157,28 @@ def validér_internt(docx):
             if RE_EKSTERN_EFTER.match(tekst[m.end():]):
                 optaget.append((m.start(), m.end()))
                 continue
-            nr1 = m.group(3) or m.group(6)
-            nr2 = m.group(4) or m.group(7)
+            nr1 = m.group("nr1_a") or m.group("nr1_b")
+            nr2 = m.group("nr2_a") or m.group("nr2_b")
+            hale = m.group("hale_a") or m.group("hale_b") or ""
+            ekstra = kt.NUM_RE.findall(hale)
             if not nr1:
                 continue
             ctx = kt.saetning(tekst, m.start(), m.end())
-            # Emne-sammenligning giver kun mening for en enkelt henvisning,
-            # ikke et interval (fx "punkt 18.1-18.3").
-            emne = None if nr2 else find_emne(tekst, m.end())
+            # Emne-sammenligning køres nu for HVERT tal i en opremsning/interval
+            # (fx "punkt 18.1, 18.2 og 18.3 (Databehandling)"), ikke kun ved en
+            # enkeltstående henvisning. Tidligere blev emne-tjek droppet helt så
+            # snart der var mere end ét tal ("giver kun mening for en enkelt
+            # henvisning") - men netop den slags opremsninger er hvor en reel
+            # fejl (et tal i midten af listen der er forskudt/forkert ift. det
+            # emne, listen faktisk beskriver) ellers aldrig bliver opdaget,
+            # fordi hvert enkelt tal jo findes og derfor ville blive "gyldig".
+            # Risikoen er flere "usikker"-markeringer for lister med en bred
+            # fælles overskrift der ikke matcher alle led lige præcist - det er
+            # en bevidst, rimelig afvejning: "usikker" beder blot om et
+            # menneskeligt kig, det er ikke en hård fejl.
+            emne = find_emne(tekst, m.end())
 
-            for nr in filter(None, (nr1, nr2)):
+            for nr in filter(None, (nr1, nr2, *ekstra)):
                 nr_norm = kt.norm_nr(nr)
                 if nr_norm not in numre:
                     fund.append(("ugyldig", m.group(0), ctx,
