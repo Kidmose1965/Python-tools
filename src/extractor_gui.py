@@ -11,11 +11,12 @@ Kræver kun Python + openpyxl - tkinter følger med Python.
 """
 
 import os
+import re
 import sys
 import traceback
 from pathlib import Path
 from tkinter import (Tk, Toplevel, Frame, Label, Button, Listbox, Scrollbar,
-                     filedialog, messagebox, BooleanVar, Checkbutton,
+                     filedialog, messagebox, simpledialog, BooleanVar, Checkbutton,
                      MULTIPLE, EXTENDED, END, BOTH, LEFT, RIGHT, X, Y)
 
 try:
@@ -92,6 +93,7 @@ class App:
             ("Krydstjek (uden semantisk kontrol)", self.krydstjek),
             ("Krydstjek med semantisk kontrol", self.krydstjek_semantik),
             ("Tjek interne henvisninger", self.intern_tjek),
+            ("Dækningstjek (mangler der aldrig citeres)", self.daekningstjek),
         ])
         self._gruppe(krop, "HJÆLP", [
             ("Vis dokumentets typografier (styles)", self.styles),
@@ -448,7 +450,19 @@ class App:
                                 "Der blev ikke fundet krydshenvisninger i dokumenterne.")
             self.sæt_status("Ingen henvisninger fundet.")
             return
-        self.sæt_status("Kører semantisk AI-analyse af ugyldige/usikre henvisninger ...")
+        alle = messagebox.askyesno(
+            "Omfang af semantisk analyse",
+            "Skal den semantiske AI-analyse også køre på GYLDIGE henvisninger "
+            "(ikke kun ugyldige/usikre)?\n\n"
+            "En henvisning kan citere et afsnitsnummer der rent faktisk findes "
+            "(og derfor er \"gyldig\") men som er det FORKERTE afsnit - fx hvis "
+            "en opremsning er blevet forskudt. Den slags fejl fanges kun ved at "
+            "tjekke gyldige henvisninger også.\n\n"
+            "Ja = grundigere, men langsommere/dyrere (alle henvisninger AI-"
+            "analyseres).\nNej = hurtigere (kun ugyldige/usikre, som hidtil).")
+        self.sæt_status("Kører semantisk AI-analyse "
+                        + ("af alle henvisninger " if alle else "af ugyldige/usikre henvisninger ")
+                        + "...")
 
         def vis_fremdrift(i, total, ref):
             # Kaldes fra semantik.analysér_batch() for hver behandlet
@@ -463,7 +477,7 @@ class App:
             for d in kontekst_docs:
                 dok_indhold[d.path.name] = kt._dok_tekst(d)
             semantik_resultater = semantik.analysér_batch(
-                fund, dok_indhold, on_progress=vis_fremdrift)
+                fund, dok_indhold, on_progress=vis_fremdrift, alle=alle)
         except Exception:
             messagebox.showwarning("Semantisk analyse fejlede",
                                    "Semantisk analyse kunne ikke gennemføres:\n\n"
@@ -516,6 +530,95 @@ class App:
                 "Intern tjek gennemført",
                 f"❌ Ugyldige: {n['ugyldig']}\n⚠️ Usikre: {n['usikker']}\n"
                 f"✅ Gyldige: {n['gyldig']}\n\nRapport gemt:\n{sti}\n\nÅbne rapporten nu?"):
+            try:
+                os.startfile(sti)
+            except AttributeError:
+                import subprocess
+                subprocess.Popen(["xdg-open", sti])
+
+    def daekningstjek(self):
+        try:
+            import daekningstjek as dt
+        except ImportError:
+            messagebox.showerror("Mangler modul",
+                                 "daekningstjek.py skal ligge i samme mappe som denne fil.")
+            return
+        messagebox.showinfo(
+            "Dækningstjek",
+            "Dækningstjek finder afsnit i ét måldokument, som ALDRIG citeres "
+            "fra et eller flere kildedokumenter - fx et evalueringsafsnit i "
+            "udbudsbetingelserne, der systematisk skal gennemgå alle afsnit i "
+            "kravspecifikationen.\n\nVælg først kildedokument(er) (det/de "
+            "dokumenter der scannes for henvisninger), derefter måldokumentet "
+            "(det dokument hvis afsnit skal tjekkes for dækning).")
+        kilder = filedialog.askopenfilenames(
+            title="Vælg kildedokument(er) - det/de der scannes for henvisninger",
+            filetypes=[("Word-dokumenter", "*.docx")])
+        if not kilder:
+            self.sæt_status("Ingen kildedokumenter blev valgt.")
+            return
+        maal_sti = filedialog.askopenfilename(
+            title="Vælg måldokumentet - dets afsnit tjekkes for dækning",
+            filetypes=[("Word-dokumenter", "*.docx")])
+        if not maal_sti:
+            self.sæt_status("Intet måldokument blev valgt.")
+            return
+        kilde_docs = self.læs(list(kilder))
+        maal_docs = self.læs([maal_sti])
+        if not kilde_docs or not maal_docs:
+            return
+        maal_doc = maal_docs[0]
+
+        omraade = simpledialog.askstring(
+            "Kapitel-område (valgfrit)",
+            "Begræns til et kapitel-område i måldokumentet, fx \"4-6\" for kun "
+            "kapitel 4, 5 og 6 (tomt felt = alle afsnit i dokumentet - kan give "
+            "meget støj hvis dokumentet har afsnit der aldrig var ment at "
+            "skulle citeres systematisk, fx en indledning):",
+            parent=self.root)
+        fra = til = None
+        if omraade and omraade.strip():
+            m = re.match(r"\s*(\d+)\s*-\s*(\d+)\s*$", omraade)
+            if m:
+                fra, til = int(m.group(1)), int(m.group(2))
+            elif omraade.strip().isdigit():
+                fra = til = int(omraade.strip())
+            else:
+                messagebox.showwarning("Ugyldigt format",
+                                       "Kunne ikke tolke området - bruger alle afsnit i stedet.")
+
+        tillad_upraefikseret = messagebox.askyesno(
+            "Medtag upræfikserede henvisninger?",
+            "Skal bare \"afsnit X\"/\"punkt X\" UDEN bilags-/kontraktpræfiks "
+            "også regnes som en henvisning til måldokumentet?\n\n"
+            "Nej (anbefalet) = kun eksplicitte henvisninger som \"bilag 1A, "
+            "afsnit X\" eller \"Kontraktens punkt X\" tælles med.\n"
+            "Ja = medtag også bare \"afsnit X\" - kun fornuftigt hvis "
+            "kildedokumentet i det undersøgte område udelukkende handler om "
+            "måldokumentets afsnit, ellers blandes interne selvhenvisninger ind.")
+
+        self.sæt_status("Kortlægger og sammenholder henvisninger ...")
+        daekket, ikke_daekket, henvisninger = dt.daekningstjek(
+            kilde_docs, maal_doc, fra=fra, til=til,
+            kun_praefikseret=not tillad_upraefikseret)
+        if not daekket and not ikke_daekket:
+            messagebox.showinfo("Ingen afsnit fundet",
+                                "Der blev ikke fundet nogen afsnit i måldokumentet "
+                                "inden for det angivne område.")
+            self.sæt_status("Ingen afsnit fundet i måldokumentet.")
+            return
+        sti = self.gem_som("daekningstjek.xlsx")
+        if not sti:
+            return
+        omraade_tekst = f"kapitel {fra}-{til}" if (fra or til) else "alle afsnit"
+        intro = (f"Måldokument: {maal_doc.path.name} | Kildedokument(er): "
+                f"{', '.join(d.path.name for d in kilde_docs)} | Område: {omraade_tekst}")
+        dt.skriv_rapport(daekket, ikke_daekket, henvisninger, maal_doc.path.name, sti, intro)
+        self.sæt_status(f"Dækningstjek: ✅ {len(daekket)} dækket, ❌ {len(ikke_daekket)} mangler")
+        if messagebox.askyesno(
+                "Dækningstjek gennemført",
+                f"✅ Dækket: {len(daekket)}\n❌ Mangler: {len(ikke_daekket)}\n\n"
+                f"Rapport gemt:\n{sti}\n\nÅbne rapporten nu?"):
             try:
                 os.startfile(sti)
             except AttributeError:

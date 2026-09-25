@@ -40,7 +40,7 @@ HENVIST INDHOLD ({ref_navn}):
 Giver denne henvisning semantisk mening?"""
 
 
-def analysér_batch(fund, dokument_indhold, max_per_minut=40, on_progress=None):
+def analysér_batch(fund, dokument_indhold, max_per_minut=40, on_progress=None, alle=False):
     """
     fund: liste af (samling, status, dok, ref, ctx, forkl) fra krydstjek
     dokument_indhold: dict {doknavn: fuldt tekstindhold}
@@ -49,19 +49,36 @@ def analysér_batch(fund, dokument_indhold, max_per_minut=40, on_progress=None):
         et kaldende GUI kan vise fremdrift og undgå at fremstå "fastfrosset"
         under det som (pga. fartbegrænsningen) kan tage adskillige minutter
         for mange dokumenter.
+    alle: hvis True, medtages ogsaa "gyldig"-fund i den semantiske analyse -
+        ikke kun ugyldige/usikre (se begrundelse nedenfor). Default False af
+        hensyn til tid/pris ved store pakker (rate-begraenset AI-kald).
 
     Returnerer: dict {(dok, ref, ctx): {"vurdering", "forklaring", "forslag"}}
     """
     import json
 
-    # Kun ugyldige og usikre er interessante for semantisk analyse
-    kandidater = [
-        f for f in fund
-        if f[1] in ("ugyldig", "usikker")
-        and f[1] != "stoej"
-    ]
+    # KRITISK BEGRAeNSNING (rettet 2026-09-25, se begrundelse): en henvisning
+    # kan citere et afsnitsnummer der RENT FAKTISK EKSISTERER (og derfor er
+    # markeret "gyldig" af krydstjek's strukturelle validering), men som er
+    # det FORKERTE afsnit i forhold til hvad teksten omkring henvisningen
+    # faktisk beskriver - fx fordi en tidligere indsat sektion har forskudt
+    # nummereringen et sted i en opremsning. Den slags fejl er strukturelt
+    # 100% gyldig og blev IKKE fanget, saa laenge semantisk analyse kun koerte
+    # paa "ugyldig"/"usikker". Saadan en fejl blev faktisk fundet i praksis
+    # (numerisk gyldigt, men forkert citeret afsnit i en opremsning).
+    # Standard er stadig False (kun ugyldige/usikre) af hensyn til tid/pris -
+    # kald med alle=True for en grundigere (men langsommere/dyrere) analyse.
+    if alle:
+        kandidater = [f for f in fund if f[1] != "stoej"]
+    else:
+        kandidater = [
+            f for f in fund
+            if f[1] in ("ugyldig", "usikker")
+            and f[1] != "stoej"
+        ]
 
-    print(f"\nSemantisk analyse af {len(kandidater)} henvisninger...")
+    print(f"\nSemantisk analyse af {len(kandidater)} henvisninger"
+          f"{' (inkl. gyldige)' if alle else ''}...")
     resultater = {}
     interval = 60.0 / max_per_minut
 
